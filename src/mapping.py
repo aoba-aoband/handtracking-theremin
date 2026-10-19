@@ -4,6 +4,8 @@ Mappings should be configurable so the platform can target SuperCollider,
 Ableton Live, Max for Live, or other systems without hard-coded gesture roles.
 """
 
+import time
+
 from src.features import HandFeatures
 from src.pitch import (
     norm_to_freq as _norm_to_freq,
@@ -13,6 +15,11 @@ from src.pitch import (
 
 DEFAULT_MIN_FREQ = 220.0
 DEFAULT_MAX_FREQ = 880.0
+DEFAULT_ARTICULATION_GATE_ON_THRESHOLD = 0.65
+DEFAULT_ARTICULATION_GATE_OFF_THRESHOLD = 0.45
+DEFAULT_ARTICULATION_HAND_LOSS_RELEASE_SECONDS = 0.25
+MIN_ARTICULATION_THRESHOLD_GAP = 0.000001
+ARTICULATION_GATE_ADDRESS = "/sample/left/articulation/gate"
 
 
 class ControlEvent:
@@ -53,12 +60,21 @@ class HandFeatureMapper(Mapper):
 class SampleMusicalMapper(Mapper):
     """Map neutral hand features to sample musical control events."""
 
+    def __init__(self, mapping_config=None, clock=None):
+        super().__init__(mapping_config=mapping_config)
+        self.articulation_tracker = LeftArticulationGateTracker(
+            mapping_config=self.mapping_config,
+            clock=clock,
+        )
+
     def map(self, features):
         """Return sample events based on MediaPipe handedness labels."""
         if isinstance(features, HandFeatures):
             features = [features]
 
+        self.articulation_tracker.configure(self.mapping_config)
         events = []
+        left_hand = None
         for hand_index, hand_features in enumerate(features or []):
             events.extend(
                 map_sample_musical_features(
@@ -67,8 +83,153 @@ class SampleMusicalMapper(Mapper):
                     self.mapping_config,
                 )
             )
+            handedness = (hand_features.handedness or "").strip().lower()
+            if handedness == "left" and left_hand is None:
+                left_hand = (hand_features, hand_index)
+
+        if left_hand is not None:
+            hand_features, hand_index = left_hand
+            events.append(
+                self.articulation_tracker.update_left_hand(
+                    hand_features,
+                    hand_index,
+                )
+            )
+        else:
+            event = self.articulation_tracker.update_left_hand_missing()
+            if event is not None:
+                events.append(event)
 
         return events
+
+    def update_articulation_settings(self, mapping_config):
+        """Apply runtime articulation settings without replacing the tracker."""
+        self.mapping_config.update(mapping_config)
+        self.articulation_tracker.update_settings(
+            on_threshold=self.mapping_config.get(
+                "articulation_gate_on_threshold",
+            ),
+            off_threshold=self.mapping_config.get(
+                "articulation_gate_off_threshold",
+            ),
+            hand_loss_release_seconds=self.mapping_config.get(
+                "articulation_hand_loss_release_seconds",
+            ),
+        )
+
+
+class LeftArticulationGateTracker:
+    """Track a hysteretic left-pinch articulation gate for sample mapping."""
+
+    def __init__(self, mapping_config=None, clock=None):
+        self.clock = clock or time.monotonic
+        self.gate = 0
+        self.last_left_seen_at = None
+        self.configure(mapping_config)
+
+    def configure(self, mapping_config=None):
+        """Apply a sanitized sample-mapping config without resetting gate state."""
+        config = mapping_config or {}
+        self.update_settings(
+            on_threshold=config.get(
+                "articulation_gate_on_threshold",
+                DEFAULT_ARTICULATION_GATE_ON_THRESHOLD,
+            ),
+            off_threshold=config.get(
+                "articulation_gate_off_threshold",
+                DEFAULT_ARTICULATION_GATE_OFF_THRESHOLD,
+            ),
+            hand_loss_release_seconds=config.get(
+                "articulation_hand_loss_release_seconds",
+                DEFAULT_ARTICULATION_HAND_LOSS_RELEASE_SECONDS,
+            ),
+        )
+
+    def update_settings(
+        self,
+        on_threshold=None,
+        off_threshold=None,
+        hand_loss_release_seconds=None,
+    ):
+        """Update calibration while preserving gate and hand-loss timing state."""
+        current_on = getattr(
+            self,
+            "on_threshold",
+            DEFAULT_ARTICULATION_GATE_ON_THRESHOLD,
+        )
+        current_off = getattr(
+            self,
+            "off_threshold",
+            DEFAULT_ARTICULATION_GATE_OFF_THRESHOLD,
+        )
+        current_release = getattr(
+            self,
+            "hand_loss_release_seconds",
+            DEFAULT_ARTICULATION_HAND_LOSS_RELEASE_SECONDS,
+        )
+        settings = _sanitize_articulation_settings(
+            current_on if on_threshold is None else on_threshold,
+            current_off if off_threshold is None else off_threshold,
+            (
+                current_release
+                if hand_loss_release_seconds is None
+                else hand_loss_release_seconds
+            ),
+        )
+        self.on_threshold = settings["articulation_gate_on_threshold"]
+        self.off_threshold = settings["articulation_gate_off_threshold"]
+        self.hand_loss_release_seconds = settings[
+            "articulation_hand_loss_release_seconds"
+        ]
+
+    def update_left_hand(self, features, hand_index=0):
+        """Update gate state from the visible left hand and return its event."""
+        pinch = _clamp(_safe_float(features.pinch, 0.0), 0.0, 1.0)
+        if pinch >= self.on_threshold:
+            self.gate = 1
+        elif pinch <= self.off_threshold:
+            self.gate = 0
+
+        self.last_left_seen_at = self.now()
+        return self.build_event(features=features, hand_index=hand_index)
+
+    def update_left_hand_missing(self):
+        """Repeat release after timeout so a lost UDP packet cannot latch gate."""
+        if self.last_left_seen_at is None:
+            return None
+
+        elapsed = self.now() - self.last_left_seen_at
+        if elapsed < self.hand_loss_release_seconds:
+            return None
+
+        self.gate = 0
+        return self.build_event(reason="left_hand_loss_timeout")
+
+    def now(self):
+        """Return the current monotonic time."""
+        return self.clock()
+
+    def build_event(self, features=None, hand_index=None, reason=None):
+        """Build the current articulation gate ControlEvent."""
+        metadata = {
+            "source_hand_index": hand_index,
+            "mapping": "sample_musical",
+            "feature": "pinch",
+            "role": "articulation_gate",
+            "gate_on_threshold": self.on_threshold,
+            "gate_off_threshold": self.off_threshold,
+        }
+        if features is not None:
+            metadata.update(
+                {
+                    "handedness": features.handedness,
+                    "landmarks_count": features.landmarks_count,
+                }
+            )
+        if reason is not None:
+            metadata["reason"] = reason
+
+        return ControlEvent(ARTICULATION_GATE_ADDRESS, self.gate, metadata)
 
 
 def map_hand_features(features, hand_index=0):
@@ -260,6 +421,95 @@ def map_sample_musical_features(features, hand_index=0, mapping_config=None):
         ]
 
     return []
+
+
+def _safe_float(value, default):
+    """Return value as float, falling back for invalid config input."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _clamp(value, minimum, maximum):
+    """Clamp a numeric value to a closed range."""
+    return max(minimum, min(maximum, value))
+
+
+def _sanitize_articulation_settings(
+    on_threshold,
+    off_threshold,
+    hand_loss_release_seconds,
+):
+    """Return safe tracker settings with a strictly ordered threshold pair."""
+    on_threshold = _clamp(
+        _safe_float(on_threshold, DEFAULT_ARTICULATION_GATE_ON_THRESHOLD),
+        0.0,
+        1.0,
+    )
+    off_threshold = _clamp(
+        _safe_float(off_threshold, DEFAULT_ARTICULATION_GATE_OFF_THRESHOLD),
+        0.0,
+        1.0,
+    )
+    if on_threshold <= 0.0:
+        on_threshold = MIN_ARTICULATION_THRESHOLD_GAP
+    if off_threshold >= on_threshold:
+        off_threshold = max(
+            0.0,
+            on_threshold - MIN_ARTICULATION_THRESHOLD_GAP,
+        )
+
+    release_seconds = max(
+        0.0,
+        _safe_float(
+            hand_loss_release_seconds,
+            DEFAULT_ARTICULATION_HAND_LOSS_RELEASE_SECONDS,
+        ),
+    )
+    return {
+        "articulation_gate_on_threshold": on_threshold,
+        "articulation_gate_off_threshold": off_threshold,
+        "articulation_hand_loss_release_seconds": release_seconds,
+    }
+
+
+def build_articulation_runtime_config(
+    threshold,
+    hysteresis_width,
+    hand_loss_release_ms,
+):
+    """Convert calibration GUI values into a sanitized runtime config."""
+    gate_on = _clamp(
+        _safe_float(threshold, DEFAULT_ARTICULATION_GATE_ON_THRESHOLD),
+        0.0,
+        1.0,
+    )
+    width = _clamp(
+        _safe_float(
+            hysteresis_width,
+            (
+                DEFAULT_ARTICULATION_GATE_ON_THRESHOLD
+                - DEFAULT_ARTICULATION_GATE_OFF_THRESHOLD
+            ),
+        ),
+        0.0,
+        1.0,
+    )
+    gate_off = round(max(0.0, gate_on - width), 6)
+    release_seconds = max(
+        0.0,
+        _safe_float(
+            hand_loss_release_ms,
+            DEFAULT_ARTICULATION_HAND_LOSS_RELEASE_SECONDS * 1000.0,
+        )
+        / 1000.0,
+    )
+    return _sanitize_articulation_settings(
+        gate_on,
+        gate_off,
+        release_seconds,
+    )
 
 
 def norm_to_freq(norm, min_freq=DEFAULT_MIN_FREQ, max_freq=DEFAULT_MAX_FREQ):

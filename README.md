@@ -21,6 +21,71 @@ time.
 
 The main expected environment is currently Windows + Python + SuperCollider.
 
+## V2a articulation decision
+
+Current decision:
+
+- Left-hand pinch has two simultaneous meanings:
+  1. continuous amp control
+  2. articulation gate source via threshold + hysteresis
+
+Status:
+
+- Provisional and reversible.
+- This is a V2a sample-mapping experiment, not a platform-wide rule.
+
+Why:
+
+- Existing continuous expression is preserved.
+- Onset and release can be explored without a separate gesture.
+- The design suits a continuous-pitch instrument.
+
+Alternatives intentionally deferred:
+
+- Pinch controls amp only.
+- Pinch controls gate only.
+- Another gesture controls articulation.
+- Python sends only raw pinch and SuperCollider derives the threshold gate.
+
+Reversal point:
+
+- `articulationOn = OFF` restores V1.5-style audible behavior:
+  continuous pinch amp remains active, while the articulation envelope is
+  bypassed.
+- The new OSC address is isolated:
+  `/sample/left/articulation/gate`.
+- Future mappings may ignore, replace, or remove this event without changing
+  right-hand pitch or left-hand tone control.
+
+## Current checkpoint (2026-10-19)
+
+V2a articulation/filter envelopes and V2a.1 runtime calibration are implemented
+on top of V1.5 tone control. Both envelope toggles default to OFF; enable them
+in the subtractive probe to audition V2a.
+
+The hands player sends `/sample/panic` on normal exit, Ctrl+C, or camera errors.
+Both SC probes release amp to zero on panic; the subtractive probe also closes
+articulation gate. After receiving a left-pinch packet, each probe watches for
+one second without another pinch packet and releases input locally. The check
+runs every 0.1 seconds; configured amp release and FX tails still apply.
+Input resumes with the next pinch packet, preserving the manual performance gate.
+Python also repeats articulation OFF after hand-loss timeout to tolerate UDP loss.
+
+The separate sounddevice player in `gui/theremin_gui.py` now uses MediaPipe Tasks
+and the bundled model. It remains separate from the OSC/SC mapping UI.
+
+```powershell
+.\venv\Scripts\python.exe -m unittest discover -s tests -v
+& 'C:\Program Files\SuperCollider-3.14.1\sclang.exe' -D (Join-Path $PWD 'tests\sc_input_lifecycle.scd')
+```
+
+Automated checks cover Python logic and shutdown, bundled model initialization,
+generated player landmark processing, full SC compilation, SynthDef generation,
+and receiver timeout/resume/panic behavior without camera or audio hardware.
+Remaining manual checks: calibrate pinch during performance, listen to envelope
+and release behavior, quit/disconnect/force-stop while playing, and switch probes.
+Low-latency mode and Ableton integration remain unimplemented.
+
 ## Setup
 
 Windows PowerShell setup:
@@ -462,10 +527,10 @@ OSCdefs, and its control/monitor windows, so the same OSC messages do not make
 both probes sound. Re-evaluating either individual probe also replaces its old
 Synth, OSCdefs, and windows.
 
-V1 intentionally does not add LFOs, PWM, filter envelopes, ADSR or note
+V1 intentionally did not add LFOs, PWM, filter envelopes, ADSR or note
 triggers, unison, alternate filter types, delay/reverb, a custom visualizer,
-or new Python gestures / OSC addresses. Those are candidates for a later
-instrument-focused pass.
+or new Python gestures / OSC addresses. V2a below adds only the isolated
+sample-mapping articulation gate and filter envelope experiment.
 
 ### V1.5: Left-Hand Tone Control
 
@@ -492,6 +557,112 @@ by `keyTracking` and smoothed by `filterLag` before reaching `RLPF`.
 the UI keeps their order valid. `toneInvert` reverses which left-hand direction
 means darker or brighter. The subtractive monitor shows the mode, raw target
 tone norm, mapped hand-tone cutoff, manual cutoff, and effective cutoff.
+
+### V2a: Articulation Gate + Filter Envelope
+
+V2a adds one sample-mapping OSC event:
+
+```text
+/sample/left/articulation/gate
+```
+
+Python derives this event from left-hand pinch using threshold + hysteresis.
+The default thresholds are `articulation_gate_on_threshold = 0.65` and
+`articulation_gate_off_threshold = 0.45`; left-hand tracking loss releases the
+gate after `articulation_hand_loss_release_seconds = 0.25`. Python does not
+shape envelopes, choose ADSR timings, or convert this gate into filter cutoff.
+It only sends `0` or `1`, while preserving `/sample/left/pinch`,
+`/sample/left/tone/norm`, and `/sample/right/pitch/final_freq`.
+
+#### V2a.1: Runtime Mapping Calibration
+
+With `--show-settings-panel`, OpenCV now opens a separate `Mapping Settings`
+window in addition to the existing `Pitch Settings` window. It provides:
+
+- Articulation threshold
+- Hysteresis width
+- Hand-loss release time in milliseconds
+
+The calibration uses:
+
+```text
+gateOn  = threshold
+gateOff = max(0, threshold - hysteresis width)
+```
+
+A pinch at or above `gateOn` opens the gate, a pinch at or below `gateOff`
+closes it, and values between them retain the previous gate state. The camera
+preview shows `Articulation Mapping` with the current raw left-pinch value,
+gate state, effective on/off thresholds, and loss-release time.
+
+Pinch values vary with camera distance, hand size, and how the hand opens, so
+the defaults are starting points rather than universal correct thresholds.
+Watch the live monitor at a natural playing distance and calibrate from the
+values you actually reach. GUI changes take effect immediately but only for
+the current session; `config.py` remains the startup-default source and is not
+rewritten.
+
+A future Mapping GUI may make the articulation source selectable from left
+pinch, right pinch, left-hand proximity candidate, right-hand proximity
+candidate, or off. A proximity candidate would be a separately evaluated
+performance feature, not a claim of physical-distance measurement from a
+monocular webcam. V2a.1 keeps the source fixed to left pinch and adds no stereo
+vision or depth-camera dependency.
+
+SuperCollider receives `/sample/left/articulation/gate` and uses it for:
+
+- articulation amp envelope
+- filter envelope
+- envelope timing and cutoff multiplier
+
+`articulationOn` defaults to OFF. When it is OFF, V1.5-style continuous pinch
+amp remains active and the articulation envelope is bypassed, so incoming gate
+events do not force the sound closed. When `articulationOn` is ON,
+`articulationGate` opens with `articulationAttack` and releases with
+`articulationRelease`. This is separate from `ampAttack` / `ampRelease`:
+
+- `ampAttack` / `ampRelease`: response time for continuous pinch amp
+- `articulationAttack` / `articulationRelease`: onset and release shape made
+  from the threshold gate
+
+`filterEnvOn` defaults to OFF. When it is OFF, no filter-envelope multiplier is
+added to the base cutoff. The filter envelope is active only when both
+`filterEnvOn` and `articulationOn` are ON. `filterEnvAmountOctaves` is an
+octave multiplier amount, not a Hz offset: larger values open the cutoff more
+at articulation onset.
+
+V2a signal path:
+
+```text
+oscillators / sub / noise
+-> source mix
+-> RLPF
+-> followed pinch amp
+-> articulation amp envelope
+-> performance gate
+-> LeakDC / Limiter
+-> Out
+```
+
+Filter cutoff path:
+
+```text
+manual cutoff or hand-tone cutoff
+-> key tracking
+-> filter lag
+-> optional filter envelope
+-> RLPF cutoff
+```
+
+Still intentionally unimplemented:
+
+- LFO
+- PWM
+- pinch-independent articulation gesture
+- explicit trigger event
+- alternate filter types
+- unison
+- polyphony
 
 This sample uses MediaPipe `handedness`, but it is still an example patch, not
 a platform rule. The sample mapping debounces handedness labels for a few

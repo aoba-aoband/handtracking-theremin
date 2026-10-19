@@ -7,6 +7,7 @@ landmark data. It should not assign musical meaning to gestures.
 from dataclasses import replace
 from pathlib import Path
 import time
+import warnings
 
 import cv2
 import mediapipe as mp
@@ -28,15 +29,23 @@ from src.mapping import (
     DEFAULT_MAX_FREQ,
     DEFAULT_MIN_FREQ,
     HandFeatureMapper,
+    ControlEvent,
     SampleMusicalMapper,
+    build_articulation_runtime_config,
 )
 
 
 DEFAULT_HAND_MODEL_PATH = "models/hand_landmarker.task"
 HANDEDNESS_STABLE_FRAMES = 3
 SETTINGS_PANEL_WINDOW = "Pitch Settings"
+MAPPING_SETTINGS_PANEL_WINDOW = "Mapping Settings"
 SETTINGS_MIDI_MIN = 45
 SETTINGS_MIDI_MAX = 84
+ARTICULATION_THRESHOLD_TRACKBAR = "Articulation threshold"
+ARTICULATION_HYSTERESIS_TRACKBAR = "Hysteresis width"
+ARTICULATION_HAND_LOSS_TRACKBAR = "Hand loss release ms"
+ARTICULATION_TRACKBAR_MAX = 100
+ARTICULATION_HAND_LOSS_MS_MAX = 2000
 PERFORMANCE_TIMING_KEYS = (
     "camera_capture_ms",
     "mediapipe_ms",
@@ -610,7 +619,7 @@ class MediaPipeHandsSmokeTest:
         return frame
 
     def start_settings_panel(self):
-        """Create the prototype settings panel if requested."""
+        """Create the pitch and runtime mapping panels if requested."""
         if not self.show_settings_panel:
             return
 
@@ -680,6 +689,42 @@ class MediaPipeHandsSmokeTest:
             len(PITCH_GUIDE_MODE_NAMES) - 1,
             self.on_settings_trackbar,
         )
+
+        tracker = self.sample_mapper.articulation_tracker
+        initial_threshold = round(
+            tracker.on_threshold * ARTICULATION_TRACKBAR_MAX
+        )
+        initial_hysteresis = round(
+            (tracker.on_threshold - tracker.off_threshold)
+            * ARTICULATION_TRACKBAR_MAX
+        )
+        initial_release_ms = round(tracker.hand_loss_release_seconds * 1000.0)
+        initial_release_ms = max(
+            0,
+            min(ARTICULATION_HAND_LOSS_MS_MAX, initial_release_ms),
+        )
+        cv2.namedWindow(MAPPING_SETTINGS_PANEL_WINDOW)
+        cv2.createTrackbar(
+            ARTICULATION_THRESHOLD_TRACKBAR,
+            MAPPING_SETTINGS_PANEL_WINDOW,
+            initial_threshold,
+            ARTICULATION_TRACKBAR_MAX,
+            self.on_settings_trackbar,
+        )
+        cv2.createTrackbar(
+            ARTICULATION_HYSTERESIS_TRACKBAR,
+            MAPPING_SETTINGS_PANEL_WINDOW,
+            initial_hysteresis,
+            ARTICULATION_TRACKBAR_MAX,
+            self.on_settings_trackbar,
+        )
+        cv2.createTrackbar(
+            ARTICULATION_HAND_LOSS_TRACKBAR,
+            MAPPING_SETTINGS_PANEL_WINDOW,
+            initial_release_ms,
+            ARTICULATION_HAND_LOSS_MS_MAX,
+            self.on_settings_trackbar,
+        )
         self.settings_panel_started = True
         self.update_settings_from_panel()
 
@@ -688,10 +733,15 @@ class MediaPipeHandsSmokeTest:
         return None
 
     def update_settings_from_panel(self):
-        """Read settings panel values and apply them to sample and guide config."""
+        """Apply pitch and articulation controls for the current frame."""
         if not self.show_settings_panel or not self.settings_panel_started:
             return
 
+        self.update_pitch_settings_from_panel()
+        self.update_mapping_settings_from_panel()
+
+    def update_pitch_settings_from_panel(self):
+        """Read pitch panel values and apply them to sample and guide config."""
         try:
             min_midi = SETTINGS_MIDI_MIN + cv2.getTrackbarPos(
                 "Pitch Min note",
@@ -728,6 +778,32 @@ class MediaPipeHandsSmokeTest:
         self.pitch_guide_mode = guide_mode
         self.sample_mapper.mapping_config = self.sample_mapping_config
 
+    def update_mapping_settings_from_panel(self):
+        """Apply session-only articulation calibration to the live tracker."""
+        try:
+            threshold_position = cv2.getTrackbarPos(
+                ARTICULATION_THRESHOLD_TRACKBAR,
+                MAPPING_SETTINGS_PANEL_WINDOW,
+            )
+            hysteresis_position = cv2.getTrackbarPos(
+                ARTICULATION_HYSTERESIS_TRACKBAR,
+                MAPPING_SETTINGS_PANEL_WINDOW,
+            )
+            hand_loss_release_ms = cv2.getTrackbarPos(
+                ARTICULATION_HAND_LOSS_TRACKBAR,
+                MAPPING_SETTINGS_PANEL_WINDOW,
+            )
+        except cv2.error:
+            return
+
+        runtime_config = build_articulation_runtime_config(
+            threshold_position / ARTICULATION_TRACKBAR_MAX,
+            hysteresis_position / ARTICULATION_TRACKBAR_MAX,
+            hand_loss_release_ms,
+        )
+        self.sample_mapping_config.update(runtime_config)
+        self.sample_mapper.update_articulation_settings(runtime_config)
+
     def draw_settings_overlay(self, frame):
         """Draw the current prototype settings on the preview frame."""
         if not self.show_settings_panel:
@@ -763,6 +839,46 @@ class MediaPipeHandsSmokeTest:
         origin = (12, max(20, height - 16))
         cv2.putText(frame, text, origin, font, scale_value, shadow, thickness + 2)
         cv2.putText(frame, text, origin, font, scale_value, color, thickness)
+        return frame
+
+    def draw_articulation_mapping_overlay(self, frame):
+        """Draw live left-pinch calibration values on the camera preview."""
+        if not self.show_settings_panel:
+            return frame
+
+        left_pinch = None
+        for features in self.current_sample_features:
+            handedness = (features.handedness or "").strip().lower()
+            if handedness == "left":
+                left_pinch = features.pinch
+                break
+
+        tracker = self.sample_mapper.articulation_tracker
+        raw_pinch_text = "--" if left_pinch is None else f"{left_pinch:.2f}"
+        gate_text = "ON" if tracker.gate else "OFF"
+        lines = [
+            "Articulation Mapping",
+            "source: left pinch",
+            f"raw pinch: {raw_pinch_text}",
+            f"gate: {gate_text}",
+            f"on / off: {tracker.on_threshold:.2f} / {tracker.off_threshold:.2f}",
+            f"loss release: {tracker.hand_loss_release_seconds * 1000.0:.0f} ms",
+        ]
+
+        height, _ = frame.shape[:2]
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.45
+        shadow = (0, 0, 0)
+        thickness = 1
+        line_height = 18
+        x = 12
+        y = max(20, height - 126)
+        for offset, line in enumerate(lines):
+            color = (0, 210, 255) if offset == 0 else (255, 255, 255)
+            origin = (x, y + offset * line_height)
+            cv2.putText(frame, line, origin, font, scale, shadow, thickness + 2)
+            cv2.putText(frame, line, origin, font, scale, color, thickness)
+
         return frame
 
     def freq_setting_to_midi(self, key, default_freq):
@@ -807,8 +923,8 @@ class MediaPipeHandsSmokeTest:
 
     def run(self):
         """Show camera frames with hand landmarks until q is pressed."""
-        self.start()
         try:
+            self.start()
             while True:
                 stats = self.performance_stats
                 timings = {} if stats is not None else None
@@ -828,6 +944,7 @@ class MediaPipeHandsSmokeTest:
                 display_frame = cv2.flip(frame, 1)
                 display_frame = self.draw_pitch_guides(display_frame)
                 display_frame = self.draw_settings_overlay(display_frame)
+                display_frame = self.draw_articulation_mapping_overlay(display_frame)
                 display_frame = self.draw_status_overlay(display_frame)
                 display_frame = self.draw_hand_labels(display_frame)
                 if timings is not None:
@@ -864,6 +981,13 @@ class MediaPipeHandsSmokeTest:
 
     def stop(self):
         """Release MediaPipe, camera, and preview resources."""
+        if self.sample_mapping and self.event_sink is not None:
+            try:
+                self.event_sink([ControlEvent("/sample/panic", 1)])
+            except Exception as exc:
+                # A broken transport must not prevent camera/model cleanup.
+                warnings.warn(f"Could not send OSC release: {exc}", RuntimeWarning)
+
         if self.landmarker is not None:
             self.landmarker.close()
             self.landmarker = None
@@ -880,6 +1004,10 @@ class MediaPipeHandsSmokeTest:
         if self.settings_panel_started:
             try:
                 cv2.destroyWindow(SETTINGS_PANEL_WINDOW)
+            except cv2.error:
+                pass
+            try:
+                cv2.destroyWindow(MAPPING_SETTINGS_PANEL_WINDOW)
             except cv2.error:
                 pass
             self.settings_panel_started = False

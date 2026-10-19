@@ -28,6 +28,10 @@ s.waitForBoot({
             freqLag: 0.08,
             ampAttack: 0.05,
             ampRelease: 0.12,
+            articulationOn: 0,
+            articulationGate: 0,
+            articulationAttack: 0.02,
+            articulationRelease: 0.08,
             performanceGate: 0,
             crescendoTime: 1.5,
             decrescendoTime: 1.5,
@@ -48,6 +52,12 @@ s.waitForBoot({
             filterRq: 0.7,
             filterMix: 1.0,
             filterLag: 0.08,
+            filterEnvOn: 0,
+            filterEnvAttack: 0.01,
+            filterEnvDecay: 0.18,
+            filterEnvSustain: 0.35,
+            filterEnvRelease: 0.15,
+            filterEnvAmountOctaves: 1.5,
             keyTracking: 0.35,
             handToneOn: 0,
             toneMinCutoff: 160,
@@ -62,6 +72,10 @@ s.waitForBoot({
             \freqLag,
             \ampAttack,
             \ampRelease,
+            \articulationOn,
+            \articulationGate,
+            \articulationAttack,
+            \articulationRelease,
             \performanceGate,
             \crescendoTime,
             \decrescendoTime,
@@ -80,6 +94,12 @@ s.waitForBoot({
             \filterRq,
             \filterMix,
             \filterLag,
+            \filterEnvOn,
+            \filterEnvAttack,
+            \filterEnvDecay,
+            \filterEnvSustain,
+            \filterEnvRelease,
+            \filterEnvAmountOctaves,
             \keyTracking,
             \handToneOn,
             \handToneCutoff,
@@ -91,6 +111,9 @@ s.waitForBoot({
             targetAmp: 0.05,
             followedFreq: 440.0,
             followedAmp: 0.05,
+            articulationEnv: 1.0,
+            filterEnvValue: 0.0,
+            filterEnvMultiplier: 1.0,
             performanceEnv: 0.0,
             targetToneNorm: 0.0,
             mappedHandToneCutoff: 2400.0,
@@ -100,6 +123,8 @@ s.waitForBoot({
 
         SynthDef(\subtractiveProbe, { |out = 0, freq = 440, amp = 0.05,
             freqLag = 0.08, ampAttack = 0.05, ampRelease = 0.12,
+            articulationOn = 0, articulationGate = 0,
+            articulationAttack = 0.02, articulationRelease = 0.08,
             performanceGate = 0, crescendoTime = 1.5, decrescendoTime = 1.5,
             outputLevel = 0.35,
             osc1Wave = 0, osc2On = 0, osc2Wave = 0, osc2Octave = 0,
@@ -107,15 +132,20 @@ s.waitForBoot({
             subMix = 0, noiseMix = 0,
             filterOn = 1, filterCutoff = 2400, filterRq = 0.7,
             filterMix = 1, filterLag = 0.08, keyTracking = 0.35,
+            filterEnvOn = 0, filterEnvAttack = 0.01,
+            filterEnvDecay = 0.18, filterEnvSustain = 0.35,
+            filterEnvRelease = 0.15, filterEnvAmountOctaves = 1.5,
             handToneOn = 0, handToneCutoff = 2400,
             monitorOn = 1, monitorRate = 8|
 
             var followedFreq, followedAmp, performanceEnv;
+            var articulationActive, clippedArticulationGate, articulationEnv;
             var width, osc1, osc2Freq, osc2, osc2Blend, oscillatorMix;
             var sub, noise, sourceMix, sourceDenom;
-            var baseCutoff, trackedCutoff, effectiveCutoff;
+            var baseCutoff, trackedCutoff, smoothedBaseCutoff, effectiveCutoff;
+            var filterEnvActive, filterEnvValue, filterEnvMultiplier;
             var filtered, filterBlend, postFilter;
-            var afterAmp, afterGate, sig, monitorTrig;
+            var afterAmp, afterArticulation, afterGate, sig, monitorTrig;
 
             followedFreq = Lag.kr(freq.clip(20, 20000), freqLag.max(0));
             followedAmp = LagUD.kr(
@@ -128,6 +158,21 @@ s.waitForBoot({
                 crescendoTime.max(0.001),
                 decrescendoTime.max(0.001)
             );
+            articulationActive = articulationOn.clip(0, 1);
+            clippedArticulationGate = articulationGate.clip(0, 1);
+            articulationEnv = Select.kr(articulationActive, [
+                1.0,
+                EnvGen.kr(
+                    Env.asr(
+                        articulationAttack.max(0.001),
+                        1.0,
+                        articulationRelease.max(0.001),
+                        curve: -4
+                    ),
+                    clippedArticulationGate,
+                    doneAction: 0
+                )
+            ]);
             width = pulseWidth.clip(0.05, 0.95);
 
             // oscillator source: 0 = Saw, 1 = Pulse, 2 = Triangle
@@ -168,10 +213,28 @@ s.waitForBoot({
             // their relative brightness can stay more consistent. At 0 it is fixed.
             trackedCutoff = baseCutoff
                 * ((followedFreq / 440).clip(0.125, 8) ** keyTracking.clip(0, 1));
-            effectiveCutoff = Lag.kr(
+            smoothedBaseCutoff = Lag.kr(
                 trackedCutoff.clip(40, 16000),
                 filterLag.max(0)
             );
+            filterEnvValue = EnvGen.kr(
+                Env.adsr(
+                    filterEnvAttack.max(0.001),
+                    filterEnvDecay.max(0.001),
+                    filterEnvSustain.clip(0, 1),
+                    filterEnvRelease.max(0.001),
+                    peakLevel: 1.0,
+                    curve: -4
+                ),
+                clippedArticulationGate,
+                doneAction: 0
+            );
+            filterEnvActive = filterEnvOn.clip(0, 1) * articulationActive;
+            filterEnvMultiplier = Select.kr(filterEnvActive, [
+                1.0,
+                2 ** (filterEnvValue * filterEnvAmountOctaves.clip(0, 5))
+            ]);
+            effectiveCutoff = (smoothedBaseCutoff * filterEnvMultiplier).clip(40, 18000);
             filtered = RLPF.ar(
                 sourceMix,
                 effectiveCutoff,
@@ -182,10 +245,15 @@ s.waitForBoot({
             postFilter = SelectX.ar(filterBlend, [sourceMix, filtered]);
 
             // Signal path:
-            // oscillator source -> source mix -> RLPF -> amplitude response
-            // -> performance gate -> LeakDC -> Limiter -> stereo Out
+            // oscillators / sub / noise -> source mix -> RLPF
+            // -> followed pinch amp -> articulation amp envelope
+            // -> performance gate -> LeakDC / Limiter -> stereo Out.
+            // Filter cutoff:
+            // manual or hand-tone cutoff -> key tracking -> filter lag
+            // -> optional filter envelope -> RLPF cutoff.
             afterAmp = postFilter * followedAmp;
-            afterGate = afterAmp
+            afterArticulation = afterAmp * articulationEnv;
+            afterGate = afterArticulation
                 * performanceEnv
                 * outputLevel.clip(0, 0.8);
             sig = LeakDC.ar(afterGate ! 2);
@@ -195,7 +263,23 @@ s.waitForBoot({
             SendReply.kr(
                 monitorTrig,
                 '/subtractiveProbe/monitor',
-                [freq, amp, followedFreq, followedAmp, performanceEnv, effectiveCutoff]
+                [
+                    freq,
+                    amp,
+                    followedFreq,
+                    followedAmp,
+                    performanceEnv,
+                    articulationActive,
+                    clippedArticulationGate,
+                    articulationEnv,
+                    filterEnvOn.clip(0, 1),
+                    filterEnvValue,
+                    filterEnvAmountOctaves.clip(0, 5),
+                    filterEnvMultiplier,
+                    filterCutoff,
+                    handToneCutoff,
+                    effectiveCutoff
+                ]
             );
             Out.ar(out, sig);
         }).add;
@@ -210,6 +294,10 @@ s.waitForBoot({
             \freqLag, ~subtractiveParams[\freqLag],
             \ampAttack, ~subtractiveParams[\ampAttack],
             \ampRelease, ~subtractiveParams[\ampRelease],
+            \articulationOn, ~subtractiveParams[\articulationOn],
+            \articulationGate, ~subtractiveParams[\articulationGate],
+            \articulationAttack, ~subtractiveParams[\articulationAttack],
+            \articulationRelease, ~subtractiveParams[\articulationRelease],
             \performanceGate, ~subtractiveParams[\performanceGate],
             \crescendoTime, ~subtractiveParams[\crescendoTime],
             \decrescendoTime, ~subtractiveParams[\decrescendoTime],
@@ -228,6 +316,12 @@ s.waitForBoot({
             \filterRq, ~subtractiveParams[\filterRq],
             \filterMix, ~subtractiveParams[\filterMix],
             \filterLag, ~subtractiveParams[\filterLag],
+            \filterEnvOn, ~subtractiveParams[\filterEnvOn],
+            \filterEnvAttack, ~subtractiveParams[\filterEnvAttack],
+            \filterEnvDecay, ~subtractiveParams[\filterEnvDecay],
+            \filterEnvSustain, ~subtractiveParams[\filterEnvSustain],
+            \filterEnvRelease, ~subtractiveParams[\filterEnvRelease],
+            \filterEnvAmountOctaves, ~subtractiveParams[\filterEnvAmountOctaves],
             \keyTracking, ~subtractiveParams[\keyTracking],
             \handToneOn, ~subtractiveParams[\handToneOn],
             \handToneCutoff, ~subtractiveParams[\handToneCutoff],
@@ -275,6 +369,16 @@ s.waitForBoot({
                         ++ ~fmtSubtractiveNumber.(~subtractiveMonitor[\performanceEnv], 0.01)
                     );
                 });
+                labels[\articulation].notNil.if({
+                    labels[\articulation].string_(
+                        "articulationOn: "
+                        ++ ~fmtSubtractiveOnOff.(~subtractiveParams[\articulationOn])
+                        ++ "    articulationGate: "
+                        ++ ~fmtSubtractiveOnOff.(~subtractiveParams[\articulationGate])
+                        ++ "    articulationEnv: "
+                        ++ ~fmtSubtractiveNumber.(~subtractiveMonitor[\articulationEnv], 0.01)
+                    );
+                });
                 labels[\filter].notNil.if({
                     labels[\filter].string_(
                         "manualFilterCutoff: "
@@ -284,6 +388,18 @@ s.waitForBoot({
                         ++ "    filter " ++ ~fmtSubtractiveOnOff.(~subtractiveParams[\filterOn])
                         ++ "    mix "
                         ++ ~fmtSubtractiveNumber.(~subtractiveParams[\filterMix])
+                    );
+                });
+                labels[\filterEnv].notNil.if({
+                    labels[\filterEnv].string_(
+                        "filterEnvOn: "
+                        ++ ~fmtSubtractiveOnOff.(~subtractiveParams[\filterEnvOn])
+                        ++ "    value: "
+                        ++ ~fmtSubtractiveNumber.(~subtractiveMonitor[\filterEnvValue], 0.01)
+                        ++ "    amountOctaves: "
+                        ++ ~fmtSubtractiveNumber.(~subtractiveParams[\filterEnvAmountOctaves], 0.01)
+                        ++ "    multiplier: "
+                        ++ ~fmtSubtractiveNumber.(~subtractiveMonitor[\filterEnvMultiplier], 0.01)
                     );
                 });
                 labels[\handTone].notNil.if({
@@ -322,6 +438,9 @@ s.waitForBoot({
         };
 
         ~setSubtractiveParam = { |key, value|
+            (key == \articulationGate).if({
+                value = value.asFloat.clip(0, 1);
+            });
             ~subtractiveParams[key] = value;
             (key == \filterCutoff).if({
                 ~subtractiveMonitor[\manualFilterCutoff] = value.asFloat.clip(40, 16000);
@@ -420,6 +539,9 @@ s.waitForBoot({
             ~subtractiveMonitor[\targetToneNorm] = 0.0;
             ~subtractiveMonitor[\mappedHandToneCutoff] = ~subtractiveDefaults[\handToneCutoff];
             ~subtractiveMonitor[\manualFilterCutoff] = ~subtractiveDefaults[\filterCutoff];
+            ~subtractiveMonitor[\articulationEnv] = 1.0;
+            ~subtractiveMonitor[\filterEnvValue] = 0.0;
+            ~subtractiveMonitor[\filterEnvMultiplier] = 1.0;
             {
                 ~subtractiveControls.notNil.if({
                     ~subtractiveControls.keysValuesDo({ |key, control|
@@ -460,7 +582,7 @@ s.waitForBoot({
                 ~subtractiveMonitorLabels = nil;
                 ~subtractiveWindow = Window(
                     "Subtractive Probe Controls",
-                    Rect(100, 60, 480, 960)
+                    Rect(100, 40, 500, 1040)
                 );
                 ~subtractiveControls = ();
 
@@ -573,6 +695,10 @@ s.waitForBoot({
                     ~makeSubtractiveSlider.("freqLag", \freqLag, 0.0, 0.5, 0.001),
                     ~makeSubtractiveSlider.("ampAttack", \ampAttack, 0.001, 1.0, 0.001),
                     ~makeSubtractiveSlider.("ampRelease", \ampRelease, 0.001, 1.5, 0.001),
+                    StaticText().string_("Articulation"),
+                    ~makeSubtractiveToggle.("articulationOn", \articulationOn),
+                    ~makeSubtractiveSlider.("articulationAttack", \articulationAttack, 0.001, 2.0, 0.001),
+                    ~makeSubtractiveSlider.("articulationRelease", \articulationRelease, 0.001, 4.0, 0.001),
                     ~makeSubtractiveSlider.("outputLevel", \outputLevel, 0.0, 0.8, 0.001),
                     ~makeSubtractiveSlider.("ampMin", \ampMin, 0.0, 0.2, 0.001),
                     ~makeSubtractiveSlider.("ampMax", \ampMax, 0.01, 0.4, 0.001),
@@ -594,6 +720,13 @@ s.waitForBoot({
                     ~makeSubtractiveSlider.("filterMix", \filterMix, 0.0, 1.0, 0.001),
                     ~makeSubtractiveSlider.("filterLag", \filterLag, 0.0, 0.5, 0.001),
                     ~makeSubtractiveSlider.("keyTracking", \keyTracking, 0.0, 1.0, 0.001),
+                    StaticText().string_("Filter Envelope"),
+                    ~makeSubtractiveToggle.("filterEnvOn", \filterEnvOn),
+                    ~makeSubtractiveSlider.("filterEnvAttack", \filterEnvAttack, 0.001, 2.0, 0.001),
+                    ~makeSubtractiveSlider.("filterEnvDecay", \filterEnvDecay, 0.001, 4.0, 0.001),
+                    ~makeSubtractiveSlider.("filterEnvSustain", \filterEnvSustain, 0.0, 1.0, 0.001),
+                    ~makeSubtractiveSlider.("filterEnvRelease", \filterEnvRelease, 0.001, 6.0, 0.001),
+                    ~makeSubtractiveSlider.("filterEnvAmountOctaves", \filterEnvAmountOctaves, 0.0, 5.0, 0.001),
                     StaticText().string_("Hand Tone Control (left-hand X -> cutoff)"),
                     ~makeSubtractiveToggle.("handToneOn", \handToneOn),
                     ~makeSubtractiveToneRangeSlider.("Hand tone range min", \toneMinCutoff),
@@ -608,7 +741,7 @@ s.waitForBoot({
 
                 ~subtractiveMonitorWindow = Window(
                     "Subtractive Probe Monitor",
-                    Rect(610, 80, 560, 340)
+                    Rect(620, 80, 620, 420)
                 );
                 ~subtractiveMonitorLabels = ();
 
@@ -632,7 +765,9 @@ s.waitForBoot({
                     ~makeSubtractiveMonitorLabel.(\freq),
                     ~makeSubtractiveMonitorLabel.(\amp),
                     ~makeSubtractiveMonitorLabel.(\gate),
+                    ~makeSubtractiveMonitorLabel.(\articulation),
                     ~makeSubtractiveMonitorLabel.(\filter),
+                    ~makeSubtractiveMonitorLabel.(\filterEnv),
                     ~makeSubtractiveMonitorLabel.(\handTone),
                     ~makeSubtractiveMonitorLabel.(\oscillators),
                     ~makeSubtractiveMonitorLabel.(\output)
@@ -648,8 +783,11 @@ s.waitForBoot({
                 msg.postln;
             });
             // SendReply: [address, nodeID, replyID, targetFreq, targetAmp,
-            // followedFreq, followedAmp, performanceEnv, effectiveCutoff].
-            (msg.size >= 9).if({
+            // followedFreq, followedAmp, performanceEnv, articulationOn,
+            // articulationGate, articulationEnv, filterEnvOn, filterEnvValue,
+            // filterEnvAmountOctaves, filterEnvMultiplier, manualFilterCutoff,
+            // mappedHandToneCutoff, effectiveCutoff].
+            (msg.size >= 18).if({
                 nodeID = msg[1].asInteger;
                 ((~subtractiveSynth.isNil) or: {
                     nodeID == ~subtractiveSynth.nodeID
@@ -659,7 +797,16 @@ s.waitForBoot({
                     ~subtractiveMonitor[\followedFreq] = msg[5].asFloat;
                     ~subtractiveMonitor[\followedAmp] = msg[6].asFloat;
                     ~subtractiveMonitor[\performanceEnv] = msg[7].asFloat;
-                    ~subtractiveMonitor[\effectiveCutoff] = msg[8].asFloat;
+                    ~subtractiveParams[\articulationOn] = msg[8].asFloat;
+                    ~subtractiveParams[\articulationGate] = msg[9].asFloat;
+                    ~subtractiveMonitor[\articulationEnv] = msg[10].asFloat;
+                    ~subtractiveParams[\filterEnvOn] = msg[11].asFloat;
+                    ~subtractiveMonitor[\filterEnvValue] = msg[12].asFloat;
+                    ~subtractiveParams[\filterEnvAmountOctaves] = msg[13].asFloat;
+                    ~subtractiveMonitor[\filterEnvMultiplier] = msg[14].asFloat;
+                    ~subtractiveMonitor[\manualFilterCutoff] = msg[15].asFloat;
+                    ~subtractiveMonitor[\mappedHandToneCutoff] = msg[16].asFloat;
+                    ~subtractiveMonitor[\effectiveCutoff] = msg[17].asFloat;
                     ~updateSubtractiveMonitor.();
                 });
             });
@@ -683,6 +830,7 @@ s.waitForBoot({
         // /sample/left/pinch is mapped locally to the user-visible amp range.
         OSCdef(\subtractiveProbeLeftPinch, { |msg, time, addr, recvPort|
             var value, amp, ampMin, ampMax;
+            ~subtractiveLastPinchAt = Main.elapsedTime;
             value = msg[1].asFloat.clip(0, 1);
             ampMin = ~subtractiveParams[\ampMin].min(~subtractiveParams[\ampMax]);
             ampMax = ~subtractiveParams[\ampMin].max(~subtractiveParams[\ampMax]);
@@ -697,6 +845,17 @@ s.waitForBoot({
             });
         }, "/sample/left/pinch");
 
+        // V2a sample mapping only: Python derives this gate from left pinch
+        // threshold + hysteresis; SC uses it for envelopes, not raw detection.
+        OSCdef(\subtractiveProbeArticulationGate, { |msg, time, addr, recvPort|
+            var gate;
+            gate = msg[1].asFloat.clip(0, 1).round(1);
+            ~setSubtractiveParam.(\articulationGate, gate);
+            ~subtractiveDebugEvents.if({
+                ["subtractive articulation gate", gate].postln;
+            });
+        }, "/sample/left/articulation/gate");
+
         // Left-hand index X remains a 0..1 tone candidate in Python. This
         // probe owns inversion, exponential cutoff mapping, and filter lag.
         OSCdef(\subtractiveProbeToneNorm, { |msg, time, addr, recvPort|
@@ -708,10 +867,38 @@ s.waitForBoot({
             });
         }, "/sample/left/tone/norm");
 
+        // Arm only after the first left-hand packet. Release amp directly so
+        // ampMin and articulation bypass cannot leave a sustained tone.
+        ~subtractiveLastPinchAt = nil;
+        ~releaseSubtractiveInput = {
+            ~subtractiveLastPinchAt = nil;
+            ~subtractiveMonitor[\targetAmp] = 0;
+            ~setSubtractiveParam.(\articulationGate, 0);
+            ~subtractiveSynth.notNil.if({
+                ~subtractiveSynth.set(\amp, 0);
+            });
+            ~updateSubtractiveMonitor.();
+        };
+        OSCdef(\subtractiveProbePanic, {
+            ~releaseSubtractiveInput.();
+        }, "/sample/panic");
+        ~subtractiveInputWatchdog = Routine({
+            loop {
+                (~subtractiveLastPinchAt.notNil).if({
+                    ((Main.elapsedTime - ~subtractiveLastPinchAt) >= 1.0).if({
+                        ~releaseSubtractiveInput.();
+                    });
+                });
+                0.1.wait;
+            };
+        }).play(SystemClock);
+
         // Shared, intentionally small probe-switch protocol.  It closes both
         // windows, frees this Synth, and unregisters only this probe's OSCdefs.
         ~activeProbeCleanup = {
             var windows, oscdefKeys;
+            ~subtractiveInputWatchdog.notNil.if({ ~subtractiveInputWatchdog.stop; });
+            ~subtractiveInputWatchdog = nil;
             ~subtractiveProbeInstance = (~subtractiveProbeInstance ? 0) + 1;
             ~subtractiveSynth.notNil.if({
                 ~subtractiveSynth.free;
@@ -722,6 +909,8 @@ s.waitForBoot({
                 \subtractiveProbeMonitor,
                 \subtractiveProbeFinalFreq,
                 \subtractiveProbeLeftPinch,
+                \subtractiveProbeArticulationGate,
+                \subtractiveProbePanic,
                 \subtractiveProbeToneNorm
             ];
             oscdefKeys.do({ |key|

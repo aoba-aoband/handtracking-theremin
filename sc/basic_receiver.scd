@@ -1212,6 +1212,7 @@ s.waitForBoot({
     // This confirms a sample patch mapping, not a platform-level volume rule.
     OSCdef(\sampleLeftPinch, { |msg, time, addr, recvPort|
         var value, amp, ampMin, ampMax;
+        ~basicLastPinchAt = Main.elapsedTime;
         value = msg[1].asFloat.clip(0, 1);
         ampMin = ~probeParams[\ampMin].min(~probeParams[\ampMax]);
         ampMax = ~probeParams[\ampMin].max(~probeParams[\ampMax]);
@@ -1226,10 +1227,32 @@ s.waitForBoot({
         });
     }, "/sample/left/pinch");
 
+    // Preserve the manual performance gate; resume when left-hand data returns.
+    ~basicLastPinchAt = nil;
+    ~releaseBasicInput = {
+        ~basicLastPinchAt = nil;
+        ~probeMonitor[\targetAmp] = 0;
+        ~basicReceiverSynth.notNil.if({ ~basicReceiverSynth.set(\amp, 0); });
+        ~updateProbeMonitor.();
+    };
+    OSCdef(\basicProbePanic, { ~releaseBasicInput.(); }, "/sample/panic");
+    ~basicInputWatchdog = Routine({
+        loop {
+            (~basicLastPinchAt.notNil).if({
+                ((Main.elapsedTime - ~basicLastPinchAt) >= 1.0).if({
+                    ~releaseBasicInput.();
+                });
+            });
+            0.1.wait;
+        };
+    }).play(SystemClock);
+
     // Shared, intentionally small probe-switch protocol.  It is safe to call
     // more than once and leaves this receiver ready to be evaluated again.
     ~activeProbeCleanup = {
         var windows, oscdefKeys;
+        ~basicInputWatchdog.notNil.if({ ~basicInputWatchdog.stop; });
+        ~basicInputWatchdog = nil;
         ~basicProbeInstance = (~basicProbeInstance ? 0) + 1;
         ~basicReceiverSynth.notNil.if({
             ~basicReceiverSynth.free;
@@ -1249,6 +1272,7 @@ s.waitForBoot({
             \sampleRightPitchFreqWithOctave,
             \sampleRightPitchQuantizedFreq,
             \sampleRightPitchFinalFreq,
+            \basicProbePanic,
             \sampleLeftPinch
         ];
         oscdefKeys.do({ |key|

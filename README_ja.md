@@ -22,6 +22,70 @@ Python側は手の検出、音程、スケール、量子化、OSC送信を担�
 
 SuperCollider側は、Pythonから届いた `final_freq` を使って発音し、Lag、ポルタメント、ソフトクリッピング、フィルター、Performance Gateなどを担当します。
 
+## V2a articulation decision（判断記録）
+
+現在の判断:
+
+- 左手 pinch には同時に2つの意味を持たせます。
+  1. continuous amp control
+  2. threshold + hysteresis による articulation gate の元信号
+
+状態:
+
+- 暫定で、いつでも戻せる設計です。
+- これは V2a の sample mapping 実験であり、platform 全体の固定ルールではありません。
+
+理由:
+
+- 既存の連続的な音量表現を残せます。
+- 新しい別ジェスチャーを要求せずに、発音開始と解放を試せます。
+- 連続 pitch の楽器として、自然な実験にしやすい設計です。
+
+今回は見送った代替案:
+
+- pinch は amp だけを制御する。
+- pinch は gate だけを制御する。
+- 別のジェスチャーで articulation を制御する。
+- Python は raw pinch だけを送り、SuperCollider 側で threshold gate を作る。
+
+戻し方:
+
+- `articulationOn = OFF` にすると V1.5 相当の聴こえ方に戻ります。
+  continuous pinch amp は有効なまま、articulation envelope だけを bypass します。
+- 新しい OSC address は `/sample/left/articulation/gate` として独立しています。
+- 将来の mapping は、右手 pitch や左手 tone control を変えずに、この event を無視・置換・削除できます。
+
+## 現在の到達点と再開方法（2026-10-19）
+
+V1.5 の左手 tone control に続き、V2a の articulation / filter envelope と
+V2a.1 の runtime calibration を実装しています。`articulationOn` と `filterEnvOn` は
+初期値 OFF です。V2a を試すときは減算合成 probe の Controls で ON にします。
+
+終了・通信断への対処も追加しました。
+
+- Python は `q`、カメラエラー、Ctrl+C による終了時に `/sample/panic` を送信します。
+- 両方の SC probe は panic で amp を 0 にします。減算合成では articulation gate も閉じます。
+- 左手 pinch を一度受信した後、1秒間受信しなければ SC 側でも同じ消音処理を行います。
+  監視は0.1秒間隔で、実際の音量低下には設定済みの amp release と FX の余韻が加わります。
+- 手の検出喪失で gate が閉じた後も、Python は OFF を繰り返し送り、UDP 欠落に備えます。
+- 左手 pinch の受信が再開すると音量操作も復帰します。手動 Performance Gate は保持します。
+
+単体の `gui/theremin_gui.py` も現行の MediaPipe Tasks API に移行しました。
+これは sounddevice で直接発音する別ランチャーで、SC 用の Mapping Settings とは別です。
+
+自動確認:
+
+```powershell
+.\venv\Scripts\python.exe -m unittest discover -s tests -v
+& 'C:\Program Files\SuperCollider-3.14.1\sclang.exe' -D (Join-Path $PWD 'tests\sc_input_lifecycle.scd')
+```
+
+Python テスト、付属モデルの初期化、SC 全体のコンパイル、SynthDef の生成、
+受信タイムアウト・復帰・panic の自動検証まで確認済みです。
+次は下記の通常起動コマンドでカメラと SC を起動し、演奏しながら閾値を校正してください。
+発音中の `q`、カメラ切断、Python の強制停止、probe の切り替え時の消音・後始末、
+手の再検出時の復帰と聴感は実機確認が残っています。低遅延モードと Ableton 連携は未実装です。
+
 ## 初回セットアップ
 
 Windows PowerShell想定:
@@ -238,7 +302,8 @@ freq・amp、gate envelope、実効 cutoff、filter 状態、oscillator 波形�
 
 V1では LFO、PWM、filter envelope、ADSR、note-on / note-off、pinch threshold gate、
 unison、HPF / BPF、delay、reverb、custom visualizer、新しい Python gesture / OSC
-address は実装していません。これらは次段階の候補です。
+address は実装していませんでした。下の V2a では、このうち sample mapping 実験として
+articulation gate と filter envelope だけを独立して追加しています。
 
 ## V1.5: 左手横位置による Tone Control
 
@@ -263,6 +328,106 @@ base cutoff として使います。その後に `keyTracking`、両方の cutof
 逆転を防ぎます。`toneInvert` は左手の左右方向と bright/dark の対応を反転します。
 Subtractive Probe Monitor では mode、target tone norm、mapped hand tone cutoff、
 manual cutoff、effective cutoff を確認できます。
+
+## V2a: Articulation Gate + Filter Envelope
+
+V2a では sample mapping の OSC event を1つ追加します。
+
+```text
+/sample/left/articulation/gate
+```
+
+Python 側は左手 pinch から threshold + hysteresis でこの gate を作ります。
+デフォルトは `articulation_gate_on_threshold = 0.65`、
+`articulation_gate_off_threshold = 0.45`、
+`articulation_hand_loss_release_seconds = 0.25` です。左手が一時的に見えなくなっても
+すぐには gate を閉じず、timeout を超えたら `0` を送ります。Python 側は envelope の
+時間形状、ADSR、cutoff への変換は担当しません。`/sample/left/pinch`、
+`/sample/left/tone/norm`、`/sample/right/pitch/final_freq` は従来どおり送ります。
+
+### V2a.1: Runtime Mapping Calibration
+
+`--show-settings-panel` を付けると、既存の `Pitch Settings` に加えて、OpenCV の
+`Mapping Settings` window が開きます。演奏中に次の項目を調整できます。
+
+- Articulation threshold
+- Hysteresis width
+- Hand-loss release time（ms）
+
+校正値の関係は次のとおりです。
+
+```text
+gateOn  = threshold
+gateOff = max(0, threshold - hysteresis width)
+```
+
+pinch が `gateOn` 以上なら gate が開き、`gateOff` 以下なら閉じ、その間では直前の
+gate 状態を維持します。camera preview の `Articulation Mapping` 表示では、現在の
+左手 raw pinch、gate の ON/OFF、実効 on/off threshold、hand-loss release time を
+確認できます。
+
+pinch 値は camera 距離、手の大きさ、手の開き方に影響されます。固定の初期値を唯一の
+正解とは考えず、自然な演奏距離で live monitor を見ながら校正してください。GUI の
+変更は即時反映されますが、現在の session 中だけ有効です。`config.py` は次回起動時の
+初期値として使われ、GUI から書き換えられません。
+
+将来は articulation source を `left pinch`、`right pinch`、
+`left hand proximity candidate`、`right hand proximity candidate`、`off` から選べる
+Mapping GUI を検討しています。ただし proximity candidate は、単眼 Web camera で
+物理的距離を測定するという意味ではなく、演奏用特徴量として別途検証する候補です。
+V2a.1 は左手 pinch 固定のままで、stereo vision や depth camera 依存を追加しません。
+
+SuperCollider 側は `/sample/left/articulation/gate` を受け取り、以下を担当します。
+
+- articulation amp envelope
+- filter envelope
+- envelope timing と cutoff 倍率
+
+`articulationOn` の初期値は OFF です。OFF のときは V1.5 と同じ continuous pinch amp の
+挙動に戻り、gate event が届いても音量が強制的に切れません。ON のときは
+`articulationGate` が `articulationAttack` で開き、`articulationRelease` で解放されます。
+これは `ampAttack` / `ampRelease` とは別の役割です。
+
+- `ampAttack` / `ampRelease`: continuous pinch amp の追従時間
+- `articulationAttack` / `articulationRelease`: gate で作る発音・解放の形
+
+`filterEnvOn` の初期値も OFF です。OFF のときは base cutoff への filter envelope 倍率は
+かかりません。filter envelope は `filterEnvOn` と `articulationOn` が両方 ON のときだけ
+有効です。`filterEnvAmountOctaves` は Hz 加算ではなく octave 単位の倍率で、値を大きく
+するほど発音開始時に cutoff が大きく開きます。
+
+V2a の信号経路:
+
+```text
+oscillators / sub / noise
+-> source mix
+-> RLPF
+-> followed pinch amp
+-> articulation amp envelope
+-> performance gate
+-> LeakDC / Limiter
+-> Out
+```
+
+filter 側の経路:
+
+```text
+manual cutoff or hand-tone cutoff
+-> key tracking
+-> filter lag
+-> optional filter envelope
+-> RLPF cutoff
+```
+
+まだ実装していない候補:
+
+- LFO
+- PWM
+- pinch 以外の articulation gesture
+- explicit trigger event
+- alternate filter types
+- unison
+- polyphony
 
 ## よくあるトラブル
 
