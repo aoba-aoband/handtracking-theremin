@@ -22,6 +22,8 @@ extract = { |source, start, end|
     // Build actual UGen graphs without booting an audio device.
     (extract.(source, "SynthDef(", "}).add;") ++ "}).add;").interpret;
 });
+check.(File.readAllString(root +/+ "sc/regular_bridge.scd").compile.notNil, "Regular bridge compilation failed");
+check.(File.readAllString(root +/+ "sc/regular_specs.scd").compile.value.notNil, "Regular specs compilation failed");
 
 ~probeParams = (ampMin: 0.02, ampMax: 0.2);
 ~probeMonitor = ();

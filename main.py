@@ -125,7 +125,7 @@ def parse_args():
         "mode",
         nargs="?",
         default="osc",
-        choices=("osc", "camera", "hands"),
+        choices=("osc", "camera", "hands", "ui"),
         help="Smoke test to run. Defaults to the existing OSC test.",
     )
     parser.add_argument(
@@ -134,6 +134,8 @@ def parse_args():
         default=0,
         help="OpenCV camera index for camera or hands mode.",
     )
+    parser.add_argument("--ui-sc-port", type=int, default=57121,
+                        help="Regular UI SC language port (legacy hands OSC remains 57120).")
     parser.add_argument(
         "--hand-model-path",
         default=DEFAULT_HAND_MODEL_PATH,
@@ -252,6 +254,11 @@ def build_sample_mapping_config(args):
 def main():
     """Run the selected smoke test."""
     args = parse_args()
+
+    if args.mode == "ui":
+        from gui.regular.app import run
+        run(args.camera_index, args.hand_model_path, build_sample_mapping_config(args), args.ui_sc_port, args.pitch_guide_mode)
+        return
 
     if args.mode == "camera":
         run_camera_smoke_test(args.camera_index)

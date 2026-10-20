@@ -153,7 +153,7 @@ s.waitForBoot({
         \harmonic12
     ];
 
-    SynthDef(\basicOscProbe, { |out = 0, freq = 440, amp = 0.05,
+    SynthDef(\basicOscProbe, { |out = 0, freq = 440, amp = 0.05, uiMute = 0,
         freqLag = 0.08, ampLag = 0.08,
         portamentoOn = 0, portamentoTime = 0.15,
         softClipOn = 0, softClipDrive = 2.0, softClipMix = 1.0,
@@ -258,7 +258,7 @@ s.waitForBoot({
             '/basicOscProbe/monitor',
             [followedFreq, followedAmp, performanceEnv, filterFreq]
         );
-        Out.ar(out, sig);
+        Out.ar(out, sig * (1 - uiMute.clip(0, 1)));
     }).add;
 
     s.sync;
@@ -850,7 +850,7 @@ s.waitForBoot({
         }.defer;
     };
 
-    {
+    if(~regularUIOnly != true, { {
         (~basicProbeInstance == basicProbeInstance).if({
         ~probeWindow.notNil.if({
             ~probeWindow.close;
@@ -1087,7 +1087,7 @@ s.waitForBoot({
         ~refreshProbeVisuals.();
         ~probeVisualizerWindow.front;
         });
-    }.defer;
+    }.defer; });
 
     OSCdef(\basicOscProbeMonitor, { |msg, time, addr, recvPort|
         var nodeID;
@@ -1104,6 +1104,7 @@ s.waitForBoot({
                 ~probeMonitor[\followedAmp] = msg[4].asFloat;
                 ~probeMonitor[\performanceEnv] = msg[5].asFloat;
                 ~probeMonitor[\filterFreq] = msg[6].asFloat;
+                ~regularMonitorNotify.notNil.if({ ~regularMonitorNotify.(\basic, ~probeMonitor); });
                 ~addProbeHistoryPoint.();
                 ~updateProbeMonitor.();
             });
@@ -1314,7 +1315,7 @@ s.waitForBoot({
     };
     ~activeProbeName = \basicReceiver;
 
-    "Listening for generic hand control events on port 57120".postln;
+    ("Listening for generic hand control events on port " ++ NetAddr.langPort).postln;
     "Listening for sample mapping events that control the probe synth.".postln;
     "Probe synth controls are available in the SuperCollider UI window.".postln;
     "Probe synth additive / FX controls are available in a separate UI window.".postln;

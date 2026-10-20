@@ -1,5 +1,14 @@
 # Handtrack Music Platform
 
+## Regular UI
+
+Run `python main.py ui`, then click **Start**. It launches SC if needed and waits
+for synchronization before opening the camera. Install the updated requirements first. Camera, Controls and Analysis
+are dockable/floating panels; Patch and Layout are saved independently.
+F5 starts, F6 stops, F12 panics. The existing CLI and sounddevice launcher remain
+independent. See the [Regular UI guide](gui/regular/README.md) for setup, connection
+ports, parameter contracts, verification and remaining hardware checks.
+
 This project is a small platform for turning hand landmark data into generic
 control events. It is not designed as a fixed theremin patch. The current goal
 is to keep hand tracking, neutral features, event mapping, and output adapters

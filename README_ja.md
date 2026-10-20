@@ -1,5 +1,22 @@
 # Handtrack Music Platform 日本語クイックガイド
 
+## 通常用UIの起動
+
+```powershell
+cd C:\Users\aobaa\handtrack_music_platform
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe main.py ui
+```
+
+**Start** を押すと、必要に応じてSCを起動し、接続と設定の同期が終わってからカメラを開始します。
+準備中は **Start pending** と表示されます。**Launch SC** でSCだけを先に起動することもできます。
+F5：Start、F6：Stop、F12：PANIC。Camera／Controls／Analysis を切り離して移動・
+サイズ変更・ドッキングでき、Patch と Layout はそれぞれ名前を付けて保存できます。
+通常用UIは専用のOSCポート57121を使います。以下の従来の `hands` 起動手順も使えます。
+
+詳しい操作、既存SCセッションへの接続、検証範囲と制約は
+[Regular UI guide](gui/regular/README.md) を参照してください。
+
 ## このファイルの目的
 
 このファイルは、プロトタイプを起動して音を出すための日本語ガイドです。

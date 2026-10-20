@@ -121,7 +121,7 @@ s.waitForBoot({
             effectiveCutoff: 2400.0
         );
 
-        SynthDef(\subtractiveProbe, { |out = 0, freq = 440, amp = 0.05,
+        SynthDef(\subtractiveProbe, { |out = 0, freq = 440, amp = 0.05, uiMute = 0,
             freqLag = 0.08, ampAttack = 0.05, ampRelease = 0.12,
             articulationOn = 0, articulationGate = 0,
             articulationAttack = 0.02, articulationRelease = 0.08,
@@ -281,7 +281,7 @@ s.waitForBoot({
                     effectiveCutoff
                 ]
             );
-            Out.ar(out, sig);
+            Out.ar(out, sig * (1 - uiMute.clip(0, 1)));
         }).add;
 
         s.sync;
@@ -571,7 +571,7 @@ s.waitForBoot({
             }.defer;
         };
 
-        {
+        if(~regularUIOnly != true, { {
             (~subtractiveProbeInstance == subtractiveProbeInstance).if({
                 ~subtractiveWindow.notNil.if({
                     ~subtractiveWindow.close;
@@ -775,7 +775,7 @@ s.waitForBoot({
                 ~refreshSubtractiveMonitor.();
                 ~subtractiveMonitorWindow.front;
             });
-        }.defer;
+        }.defer; });
 
         OSCdef(\subtractiveProbeMonitor, { |msg, time, addr, recvPort|
             var nodeID;
@@ -807,6 +807,7 @@ s.waitForBoot({
                     ~subtractiveMonitor[\manualFilterCutoff] = msg[15].asFloat;
                     ~subtractiveMonitor[\mappedHandToneCutoff] = msg[16].asFloat;
                     ~subtractiveMonitor[\effectiveCutoff] = msg[17].asFloat;
+                    ~regularMonitorNotify.notNil.if({ ~regularMonitorNotify.(\subtractive, ~subtractiveMonitor); });
                     ~updateSubtractiveMonitor.();
                 });
             });
