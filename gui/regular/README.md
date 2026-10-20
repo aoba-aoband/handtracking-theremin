@@ -1,4 +1,7 @@
-# Regular UI
+# Handtracking Theremin — Regular UI
+
+[Project README](../../README.md) · [Quick Start](../../QUICKSTART.md) ·
+[クイックスタート](../../QUICKSTART_ja.md)
 
 Launch from the repository root:
 
@@ -11,8 +14,7 @@ Click **Start** (F5). If SC is not connected, it launches SC and displays
 **Start pending** until the connection and settings synchronization finish.
 It then opens the camera and opens the performance gate after the first frame.
 **Launch SC** can also prepare SC separately. **Stop** cancels a pending Start,
-closes the gate and stops the
-camera. **PANIC** immediately mutes the owned synth, clears pending commands,
+closes the gate and stops the camera. **PANIC** immediately mutes the owned synth, clears pending commands,
 and closes the performance gate; it leaves the camera running. Only an explicit
 Start/Gate action unmutes. Patch recall, reset, reconnect and probe switching
 remain silent.
@@ -100,6 +102,8 @@ parameter round trips, timeout/PANIC, camera acquisition (640×480), model infer
 patch/layout tests, rendered layouts and native Stethoscope/Freq Analyzer window
 creation. Capturing those SC windows for visual inspection timed out at Computer
 Use app approval, so their displayed signal contents were not visually verified.
-Real hand performance, listening tests, and moving windows onto a second physical
-monitor still require manual checking. The camera check had no detected hands;
-mapping/octave/quantization behavior was exercised with controlled feature inputs.
+Live camera video and a right-hand landmark overlay were also observed during
+startup troubleshooting. The production Start / Stop check received camera frames
+with hand detection. Mapping/octave/quantization behavior is additionally covered
+with controlled feature inputs. Extended two-hand performance, listening tests,
+and moving windows onto a second physical monitor still require manual checking.
