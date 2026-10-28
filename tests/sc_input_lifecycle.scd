@@ -24,6 +24,18 @@ extract = { |source, start, end|
 });
 check.(File.readAllString(root +/+ "sc/regular_bridge.scd").compile.notNil, "Regular bridge compilation failed");
 check.(File.readAllString(root +/+ "sc/regular_specs.scd").compile.value.notNil, "Regular specs compilation failed");
+check.(File.readAllString(root +/+ "sc/regular_session.scd").compile.notNil, "Regular session compilation failed");
+check.(File.readAllString(root +/+ "sc/regular_engine.scd").compile.notNil, "Regular engine compilation failed");
+(root +/+ "sc/regular_effect_specs.scd").load;
+(root +/+ "sc/regular_engine.scd").load;
+~regularDefineDSP.();
+~regularMod[\fuzz] = (target: \drive, value: 1, presence: 0, at: Main.elapsedTime);
+check.(~regularEffectiveFX.(\fuzz)[\mix] == 0, "Fuzz hand loss must fade wet path");
+~regularMod[\vibrato] = (target: \rate, value: 5, presence: 0, at: Main.elapsedTime);
+check.(~regularEffectiveFX.(\vibrato)[\depth] == 0, "Rate mapping loss must remove modulation depth");
+~regularMod[\fuzz] = (target: \drive, value: 40, presence: 1, at: Main.elapsedTime - 1);
+check.(~regularEffectiveFX.(\fuzz)[\mix] == 0, "Stale angle packets must fade effect");
+~regularMod = ();
 
 ~probeParams = (ampMin: 0.02, ampMax: 0.2);
 ~probeMonitor = ();

@@ -67,8 +67,11 @@ class ParameterControl(QWidget):
             self.number.setSingleStep(spec.step or .001)
             self.number.setKeyboardTracking(False)
             self.number.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-            self.number.setMinimumWidth(58 if vertical else 78)
-            self.number.setMaximumWidth(72 if vertical else 95)
+            self.number.ensurePolished()
+            # Use the actual extremes/precision, including a possible minus sign.
+            number_width = max(self.number.fontMetrics().horizontalAdvance(self.number.textFromValue(v))
+                               for v in (spec.minimum, spec.maximum)) + 20
+            self.number.setFixedWidth(max(52 if vertical else 78, number_width))
             if vertical:
                 layout.addWidget(self.slider, 1, Qt.AlignmentFlag.AlignHCenter)
             else:
@@ -113,7 +116,7 @@ class ParameterControl(QWidget):
 
 class Module(QWidget):
     """Self-contained section; adding modules does not change the window shell."""
-    def __init__(self, title, specs, values, callback, harmonic=False, plot=None):
+    def __init__(self, title, specs, values, callback, harmonic=False, plot=None, header_keys=None):
         super().__init__()
         self.setObjectName("module")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -121,20 +124,21 @@ class Module(QWidget):
         self.title = title
         layout = QVBoxLayout(self)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
-        header = QHBoxLayout()
+        header = QHBoxLayout(); self.header = header
         heading = QLabel(title)
         heading.setFixedHeight(30)
         heading.setObjectName("heading")
         header.addWidget(heading)
         header.addStretch()
         layout.addLayout(header)
-        body = QHBoxLayout() if harmonic or title == "Additive" else QVBoxLayout()
+        body = QHBoxLayout() if harmonic else QVBoxLayout()
         for spec in specs:
             control = ParameterControl(spec, harmonic)
             control.changed.connect(callback)
             control.show_value(None if spec.kind == "readout" else values[spec.key])
             self.controls[spec.key] = control
-            if spec.kind == "toggle" and (spec.key.endswith("On") or spec.key == "performanceGate"):
+            in_header = spec.key in header_keys if header_keys is not None else (spec.key.endswith("On") or spec.key == "performanceGate")
+            if spec.kind == "toggle" and in_header:
                 header.addWidget(control)
             else:
                 body.addWidget(control)
@@ -142,7 +146,7 @@ class Module(QWidget):
         if plot:
             layout.addWidget(plot)
         layout.addStretch()
-        self.setMinimumWidth(780 if harmonic else 330)
+        self.setMinimumWidth(0 if harmonic else 330)
 
 
 class CameraView(QWidget):
@@ -152,7 +156,7 @@ class CameraView(QWidget):
         self.image = None
         self.features, self.events = [], []
         self.fps = 0
-        self.setMinimumSize(400, 260)
+        self.setMinimumSize(360, 180)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setObjectName("cameraView")
 
@@ -161,6 +165,7 @@ class CameraView(QWidget):
         self.update()
 
     def paintEvent(self, event):
+        paint_started = time.perf_counter()
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), QColor("#142024"))
@@ -205,6 +210,9 @@ class CameraView(QWidget):
         footer = f"{self.fps:.1f} FPS • {self.settings['guide_mode']} guides • Quantize {'ON' if m['quantize_pitch'] else 'OFF'}"
         p.fillRect(QRectF(8, self.height() - 28, self.width() - 16, 22), QColor(15, 26, 28, 230))
         p.drawText(QRectF(14, self.height() - 28, self.width() - 28, 22), Qt.AlignmentFlag.AlignVCenter, footer)
+        if getattr(self, "metrics", None) and self.image.text("capturedAt"):
+            self.metrics.shown({"paint_event_ms": (time.perf_counter() - paint_started) * 1000,
+                                "display_age_ms": (time.perf_counter() - float(self.image.text("capturedAt"))) * 1000})
 
 
 class EnvelopePlot(QWidget):
@@ -253,7 +261,7 @@ class FilterPlot(QWidget):
         super().__init__()
         self.settings, self.monitor, self.received = settings, {}, 0
         self.fresh_seconds = 1
-        self.setMinimumSize(400, 260)
+        self.setMinimumSize(340, 200)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -264,11 +272,16 @@ class FilterPlot(QWidget):
         x = lambda hz: area.left() + np.clip(math.log(max(xmin, hz) / xmin) / math.log(xmax / xmin), 0, 1) * area.width()
         y = lambda db: area.top() + (12 - np.clip(db, -48, 12)) / 60 * area.height()
         p.setPen(MUTED)
+        last_label_right = -100
         for hz in (10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000):
             p.setPen(QPen(QColor("#344342"), 1))
             p.drawLine(x(hz), area.top(), x(hz), area.bottom())
             p.setPen(MUTED)
-            p.drawText(QRectF(x(hz) - 18, area.bottom() + 4, 40, 20), Qt.AlignmentFlag.AlignCenter, f"{hz // 1000}k" if hz >= 1000 else str(hz))
+            text = f"{hz // 1000}k" if hz >= 1000 else str(hz)
+            width = p.fontMetrics().horizontalAdvance(text) + 8
+            if x(hz) - width / 2 >= last_label_right:
+                p.drawText(QRectF(x(hz) - width / 2, area.bottom() + 4, width, 20), Qt.AlignmentFlag.AlignCenter, text)
+                last_label_right = x(hz) + width / 2
         for db in (12, 0, -12, -24, -36, -48):
             p.setPen(QPen(QColor("#344342"), 1))
             p.drawLine(area.left(), y(db), area.right(), y(db))
@@ -281,7 +294,7 @@ class FilterPlot(QWidget):
         manual = values["filterCutoff"]
         fresh = time.monotonic() - self.received < self.fresh_seconds
         effective = self.monitor.get("effectiveCutoff", self.monitor.get("filterFreq")) if fresh else None
-        freq = self.monitor.get("followedFreq") if fresh else None
+        freq = self.monitor.get("oscFreq", self.monitor.get("followedFreq")) if fresh else None
         # RLPF analogue approximation, not a measured transfer function.
         cutoff = effective if effective is not None else manual
         rq, mix = values["filterRq"], values["filterMix"] * values["filterOn"]
@@ -299,9 +312,6 @@ class FilterPlot(QWidget):
             if value is not None:
                 p.setPen(QPen(color, 1, Qt.PenStyle.DashLine)); p.drawLine(x(value), area.top(), x(value), area.bottom())
         p.setPen(MUTED)
-        p.drawText(8, 18, "Filter • RLPF response model (not measured) • Hz / dB")
-        eff_text = f"{effective:.1f} Hz" if effective is not None else "not received"
-        freq_text = f"{freq:.1f} Hz" if freq is not None else "not received"
-        p.drawText(8, self.height() - 27, f"Pitch range {mapping['pitch_min_freq']:.1f}–{mapping['pitch_max_freq']:.1f} Hz • manual {manual:.1f} Hz")
-        p.setPen(ORANGE); p.drawText(8, self.height() - 8, f"Effective {eff_text}    ")
-        p.setPen(BLUE); p.drawText(self.width() / 2, self.height() - 8, f"Followed {freq_text}")
+        p.drawText(8, 18, "Filter • Model • Hz / dB")
+        p.drawText(8, self.height() - 27, "Shaded: pitch range   •   dashed: cutoff / pitch")
+        p.drawText(8, self.height() - 8, "RLPF approximation • not a measured response")

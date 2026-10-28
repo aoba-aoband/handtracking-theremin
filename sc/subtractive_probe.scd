@@ -1,5 +1,5 @@
 /*
-Subtractive synthesis probe for the handtrack_music_platform sample mapping.
+Subtractive synthesis probe for the Handtracking Theremin sample mapping.
 
 This is intentionally separate from basic_receiver.scd. Python decides pitch,
 quantization, and final_freq; this file decides how that received frequency is
@@ -121,7 +121,8 @@ s.waitForBoot({
             effectiveCutoff: 2400.0
         );
 
-        SynthDef(\subtractiveProbe, { |out = 0, freq = 440, amp = 0.05, uiMute = 0,
+        SynthDef(\subtractiveProbe, { |out = 0, freq = 440, amp = 0.05, uiMute = 0, sharedFX = 0,
+        vibratoOn = 0, vibratoRate = 5, vibratoDepth = 0, vibratoWave = 0, monitorBus = 0, monitorGeneration = 0,
             freqLag = 0.08, ampAttack = 0.05, ampRelease = 0.12,
             articulationOn = 0, articulationGate = 0,
             articulationAttack = 0.02, articulationRelease = 0.08,
@@ -138,7 +139,7 @@ s.waitForBoot({
             handToneOn = 0, handToneCutoff = 2400,
             monitorOn = 1, monitorRate = 8|
 
-            var followedFreq, followedAmp, performanceEnv;
+            var followedFreq, followedAmp, performanceEnv, oscFreq, vibratoLFO;
             var articulationActive, clippedArticulationGate, articulationEnv;
             var width, osc1, osc2Freq, osc2, osc2Blend, oscillatorMix;
             var sub, noise, sourceMix, sourceDenom;
@@ -175,13 +176,15 @@ s.waitForBoot({
             ]);
             width = pulseWidth.clip(0.05, 0.95);
 
+            vibratoLFO = Lag.kr(Select.kr(vibratoWave.clip(0, 2), [SinOsc.kr(Lag.kr(vibratoRate, 0.03)), LFTri.kr(Lag.kr(vibratoRate, 0.03)), LFPulse.kr(Lag.kr(vibratoRate, 0.03)).range(-1, 1)]), 0.003);
+            oscFreq = followedFreq * (2 ** (vibratoLFO * Lag.kr(vibratoOn * vibratoDepth, 0.03) / 1200));
             // oscillator source: 0 = Saw, 1 = Pulse, 2 = Triangle
             osc1 = Select.ar(osc1Wave.clip(0, 2), [
-                Saw.ar(followedFreq),
-                Pulse.ar(followedFreq, width),
-                LFTri.ar(followedFreq)
+                Saw.ar(oscFreq),
+                Pulse.ar(oscFreq, width),
+                LFTri.ar(oscFreq)
             ]);
-            osc2Freq = followedFreq
+            osc2Freq = oscFreq
                 * (2 ** osc2Octave.clip(-2, 2))
                 * (2 ** (osc2DetuneCents.clip(-50, 50) / 1200));
             osc2 = Select.ar(osc2Wave.clip(0, 2), [
@@ -192,7 +195,7 @@ s.waitForBoot({
             osc2Blend = osc2On.clip(0, 1) * oscMix.clip(0, 1);
             oscillatorMix = SelectX.ar(osc2Blend, [osc1, osc2]);
 
-            sub = SinOsc.ar(followedFreq * 0.5);
+            sub = SinOsc.ar(oscFreq * 0.5);
             noise = PinkNoise.ar;
             // source mix: normalize optional sub/noise so their mix changes
             // remain controlled before the resonant filter.
@@ -257,9 +260,29 @@ s.waitForBoot({
                 * performanceEnv
                 * outputLevel.clip(0, 0.8);
             sig = LeakDC.ar(afterGate ! 2);
-            sig = Limiter.ar(sig, 0.8, 0.01);
+            sig = (~regularUIOnly == true).if({ sig.clip2(0.8) }, { Limiter.ar(sig, 0.8, 0.01) });
 
             monitorTrig = Impulse.kr(monitorRate.clip(0.5, 20)) * monitorOn.clip(0, 1);
+            (~regularUIOnly == true).if({
+                Out.kr(monitorBus, [monitorGeneration] ++ [
+                    freq,
+                    amp,
+                    followedFreq,
+                    followedAmp,
+                    performanceEnv,
+                    articulationActive,
+                    clippedArticulationGate,
+                    articulationEnv,
+                    filterEnvOn.clip(0, 1),
+                    filterEnvValue,
+                    filterEnvAmountOctaves.clip(0, 5),
+                    filterEnvMultiplier,
+                    filterCutoff,
+                    handToneCutoff,
+                    effectiveCutoff,
+                    oscFreq
+                ]);
+            }, {
             SendReply.kr(
                 monitorTrig,
                 '/subtractiveProbe/monitor',
@@ -281,6 +304,8 @@ s.waitForBoot({
                     effectiveCutoff
                 ]
             );
+            });
+
             Out.ar(out, sig * (1 - uiMute.clip(0, 1)));
         }).add;
 

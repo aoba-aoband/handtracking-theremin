@@ -315,6 +315,8 @@ class MediaPipeHandsSmokeTest:
         self.current_events = []
         self.current_sample_events = []
         self.current_hand_labels = []
+        self.feature_processor = None
+        self.control_ready_at = 0.
 
     def start(self):
         """Open the configured camera and initialize MediaPipe Hands."""
@@ -361,7 +363,7 @@ class MediaPipeHandsSmokeTest:
 
         return frame
 
-    def draw_landmarks(self, frame, timings=None):
+    def draw_landmarks(self, frame, timings=None, draw=True):
         """Draw detected hand landmarks and connections on a frame."""
         if self.landmarker is None:
             raise RuntimeError("MediaPipe HandLandmarker has not been started")
@@ -395,8 +397,12 @@ class MediaPipeHandsSmokeTest:
                 self.current_sample_features
             )
         self.current_hand_labels = self.build_hand_labels(results.hand_landmarks)
+        extra_mapping_ms = extra_send_ms = 0.
+        if self.feature_processor is not None:
+            extra_mapping_ms, extra_send_ms = self.feature_processor(self.current_sample_features, frame.shape[1], frame.shape[0])
         if timings is not None:
-            timings["mapping_ms"] = (time.perf_counter() - stage_started) * 1000
+            timings["mapping_ms"] = (time.perf_counter() - stage_started) * 1000 - extra_send_ms
+            timings["angle_mapping_ms"] = extra_mapping_ms
 
         output_events = self.current_events + self.current_sample_events
         if timings is not None:
@@ -404,11 +410,12 @@ class MediaPipeHandsSmokeTest:
         if self.event_sink is not None and output_events:
             self.event_sink(output_events)
         if timings is not None:
-            timings["osc_send_ms"] = (time.perf_counter() - stage_started) * 1000
+            timings["osc_send_ms"] = (time.perf_counter() - stage_started) * 1000 + extra_send_ms
+        self.control_ready_at = time.perf_counter()
 
         if timings is not None:
             stage_started = time.perf_counter()
-        if results.hand_landmarks:
+        if draw and results.hand_landmarks:
             for hand_landmarks in results.hand_landmarks:
                 vision.drawing_utils.draw_landmarks(
                     frame,

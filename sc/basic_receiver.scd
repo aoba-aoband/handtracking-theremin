@@ -153,7 +153,8 @@ s.waitForBoot({
         \harmonic12
     ];
 
-    SynthDef(\basicOscProbe, { |out = 0, freq = 440, amp = 0.05, uiMute = 0,
+    SynthDef(\basicOscProbe, { |out = 0, freq = 440, amp = 0.05, uiMute = 0, sharedFX = 0,
+        vibratoOn = 0, vibratoRate = 5, vibratoDepth = 0, vibratoWave = 0, monitorBus = 0, monitorGeneration = 0,
         freqLag = 0.08, ampLag = 0.08,
         portamentoOn = 0, portamentoTime = 0.15,
         softClipOn = 0, softClipDrive = 2.0, softClipMix = 1.0,
@@ -173,7 +174,7 @@ s.waitForBoot({
         performanceGate = 0, crescendoTime = 1.5, decrescendoTime = 1.5,
         monitorOn = 1, monitorRate = 10|
 
-        var freqFollowTime, followedFreq, followedAmp;
+        var freqFollowTime, followedFreq, followedAmp, oscFreq, vibratoLFO;
         var performanceEnv, base, additive, harmonicWeight, oscMix, source;
         var dry, clipped, shaped;
         var filterFreq, filtered, filteredMix;
@@ -193,25 +194,28 @@ s.waitForBoot({
             decrescendoTime.max(0)
         );
 
-        base = SinOsc.ar(followedFreq);
+        // SC generates modulation after the Python-quantized base pitch.
+        vibratoLFO = Lag.kr(Select.kr(vibratoWave.clip(0, 2), [SinOsc.kr(Lag.kr(vibratoRate, 0.03)), LFTri.kr(Lag.kr(vibratoRate, 0.03)), LFPulse.kr(Lag.kr(vibratoRate, 0.03)).range(-1, 1)]), 0.003);
+        oscFreq = followedFreq * (2 ** (vibratoLFO * Lag.kr(vibratoOn * vibratoDepth, 0.03) / 1200));
+        base = SinOsc.ar(oscFreq);
         harmonicWeight = (
             harmonic1 + harmonic2 + harmonic3 + harmonic4
             + harmonic5 + harmonic6 + harmonic7 + harmonic8
             + harmonic9 + harmonic10 + harmonic11 + harmonic12
         ).max(0.001);
         additive = (
-            (SinOsc.ar(followedFreq * 1) * harmonic1)
-            + (SinOsc.ar(followedFreq * 2) * harmonic2)
-            + (SinOsc.ar(followedFreq * 3) * harmonic3)
-            + (SinOsc.ar(followedFreq * 4) * harmonic4)
-            + (SinOsc.ar(followedFreq * 5) * harmonic5)
-            + (SinOsc.ar(followedFreq * 6) * harmonic6)
-            + (SinOsc.ar(followedFreq * 7) * harmonic7)
-            + (SinOsc.ar(followedFreq * 8) * harmonic8)
-            + (SinOsc.ar(followedFreq * 9) * harmonic9)
-            + (SinOsc.ar(followedFreq * 10) * harmonic10)
-            + (SinOsc.ar(followedFreq * 11) * harmonic11)
-            + (SinOsc.ar(followedFreq * 12) * harmonic12)
+            (SinOsc.ar(oscFreq * 1) * harmonic1)
+            + (SinOsc.ar(oscFreq * 2) * harmonic2)
+            + (SinOsc.ar(oscFreq * 3) * harmonic3)
+            + (SinOsc.ar(oscFreq * 4) * harmonic4)
+            + (SinOsc.ar(oscFreq * 5) * harmonic5)
+            + (SinOsc.ar(oscFreq * 6) * harmonic6)
+            + (SinOsc.ar(oscFreq * 7) * harmonic7)
+            + (SinOsc.ar(oscFreq * 8) * harmonic8)
+            + (SinOsc.ar(oscFreq * 9) * harmonic9)
+            + (SinOsc.ar(oscFreq * 10) * harmonic10)
+            + (SinOsc.ar(oscFreq * 11) * harmonic11)
+            + (SinOsc.ar(oscFreq * 12) * harmonic12)
         ) / harmonicWeight;
         additive = additive * additiveGain.clip(0, 2);
         oscMix = additiveOn.clip(0, 1) * additiveMix.clip(0, 1);
@@ -231,17 +235,20 @@ s.waitForBoot({
         );
         fxIn = filteredMix ! 2;
 
+        // The Regular UI has a separate shared FX graph. Avoid allocating
+        // the legacy delay/reverb a second time; CLI synthesis stays unchanged.
+        afterReverb = (~regularUIOnly == true).if({ fxIn }, {
         delayFilterFreq = Lag.kr(delayFilterCutoff.clip(100, 12000), delayLag.max(0));
         feedback = delayFeedback.clip(0, 0.85);
-        delayBlend = delayOn.clip(0, 1) * delayMix.clip(0, 1);
+        delayBlend = (delayOn.clip(0, 1) * (1 - sharedFX.clip(0, 1))) * delayMix.clip(0, 1);
         fb = LocalIn.ar(2);
         delayInput = fxIn + (fb * feedback);
         delayTap = DelayC.ar(delayInput, 2.0, delayTime.clip(0.02, 2.0));
         delayFiltered = RLPF.ar(delayTap, delayFilterFreq, delayFilterRq.clip(0.05, 1.0));
-        LocalOut.ar(delayFiltered * delayOn.clip(0, 1));
+        LocalOut.ar(delayFiltered * (delayOn.clip(0, 1) * (1 - sharedFX.clip(0, 1))));
         afterDelay = (fxIn * (1 - delayBlend)) + (delayFiltered * delayBlend);
 
-        reverbBlend = reverbOn.clip(0, 1) * reverbMix.clip(0, 1);
+        reverbBlend = (reverbOn.clip(0, 1) * (1 - sharedFX.clip(0, 1))) * reverbMix.clip(0, 1);
         reverbWet = FreeVerb2.ar(
             afterDelay[0],
             afterDelay[1],
@@ -251,13 +258,21 @@ s.waitForBoot({
         );
         afterReverb = (afterDelay * (1 - reverbBlend)) + (reverbWet * reverbBlend);
 
+            afterReverb;
+        });
+
         sig = afterReverb * outputLevel.clip(0, 1) * performanceEnv;
         monitorTrig = Impulse.kr(monitorRate.clip(0.1, 30)) * monitorOn.clip(0, 1);
+        (~regularUIOnly == true).if({
+            Out.kr(monitorBus, [monitorGeneration] ++ [followedFreq, followedAmp, performanceEnv, filterFreq, oscFreq]);
+        }, {
         SendReply.kr(
             monitorTrig,
             '/basicOscProbe/monitor',
             [followedFreq, followedAmp, performanceEnv, filterFreq]
         );
+        });
+
         Out.ar(out, sig * (1 - uiMute.clip(0, 1)));
     }).add;
 

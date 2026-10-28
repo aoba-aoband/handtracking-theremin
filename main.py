@@ -257,7 +257,8 @@ def main():
 
     if args.mode == "ui":
         from gui.regular.app import run
-        run(args.camera_index, args.hand_model_path, build_sample_mapping_config(args), args.ui_sc_port, args.pitch_guide_mode)
+        run(args.camera_index, args.hand_model_path, build_sample_mapping_config(args), args.ui_sc_port, args.pitch_guide_mode,
+            args.show_performance_stats, args.performance_stats_interval)
         return
 
     if args.mode == "camera":
