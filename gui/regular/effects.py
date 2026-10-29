@@ -16,10 +16,10 @@ def wave(): return Parameter("wave", 0, 0, 2, 1, kind="choice", choices=("Sine",
 
 
 FX_SPECS = {
-    "tremolo": {s.key: s for s in (toggle(), p("rate", 5, .05, 30, .01, "Hz", "exp"), p("depth", .5), wave())},
-    "vibrato": {s.key: s for s in (toggle(), p("rate", 5, .05, 30, .01, "Hz", "exp"), p("depth", 20, 0, 200, .1, "ct"), wave())},
-    "distortion": {s.key: s for s in (toggle(), p("drive", 2, 1, 40, .01, warp="exp"), p("tone", 8000, 100, 18000, 1, "Hz", "exp"), p("level", .5, 0, 2), p("mix", 1))},
-    "fuzz": {s.key: s for s in (toggle(), p("drive", 8, 1, 80, .01, warp="exp"), p("tone", 4000, 100, 18000, 1, "Hz", "exp"), p("level", .4, 0, 2), p("mix", 1))},
+    "tremolo": {s.key: s for s in (toggle(), p("rate", 5, .05, 60, .01, "Hz", "exp"), p("depth", .5, 0, 2), wave())},
+    "vibrato": {s.key: s for s in (toggle(), p("rate", 5, .05, 60, .01, "Hz", "exp"), p("depth", 20, 0, 400, .1, "ct"), wave())},
+    "distortion": {s.key: s for s in (toggle(), p("drive", 2, 1, 80, .01, warp="exp"), p("tone", 8000, 100, 18000, 1, "Hz", "exp"), p("level", .5, 0, 2), p("mix", 1))},
+    "fuzz": {s.key: s for s in (toggle(), p("drive", 8, 1, 160, .01, warp="exp"), p("tone", 4000, 100, 18000, 1, "Hz", "exp"), p("level", .4, 0, 2), p("mix", 1))},
 }
 LEGACY_FX = {}
 for effect, prefix in (("delay", "delay"), ("reverb", "reverb")):

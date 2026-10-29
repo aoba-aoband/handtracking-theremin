@@ -36,9 +36,10 @@ class EffectPlot(QWidget):
             phase = x * 4 * math.pi
             wave = np.sin(phase) if values["wave"] == 0 else (np.arcsin(np.sin(phase))*2/math.pi if values["wave"] == 1 else np.sign(np.sin(phase)))
             y = (1 - depth*(wave+1)/2) if effect == "tremolo" else wave*depth
-            yplot = 1-y if effect == "tremolo" else .5 - y/400
+            max_depth = FX_SPECS[effect]["depth"].maximum
+            yplot = (1-y)/max_depth if effect == "tremolo" else .5 - y/(2*max_depth)
             title = f"LFO model • {rate:.2f} Hz / {1000/max(.05,rate):.1f} ms"
-            footer = f"0 → {2000/max(.05,rate):.1f} ms • " + ("gain 0–1" if effect == "tremolo" else "−200…+200 ct")
+            footer = f"0 → {2000/max(.05,rate):.1f} ms • " + (f"gain {1-max_depth:g}…1" if effect == "tremolo" else f"−{max_depth:g}…+{max_depth:g} ct")
         else:
             yplot = 1 - np.array([response_curve(float(v), mapping) for v in x])
             title = "Angle → target • model"
@@ -66,7 +67,8 @@ class EffectModule(QWidget):
         for key, control in self.module.controls.items():
             control.findChild(QLabel).setText({"filterCutoff":"Filter Cutoff", "filterRq":"Filter Rq"}.get(key,key.title()))
         if effect in ("tremolo", "vibrato"):
-            self.period=QDoubleSpinBox(); self.period.setRange(1000/30, 20000); self.period.setDecimals(3); self.period.setSuffix(" ms")
+            rate_spec = FX_SPECS[effect]["rate"]
+            self.period=QDoubleSpinBox(); self.period.setDecimals(3); self.period.setRange(1000/rate_spec.maximum, 1000/rate_spec.minimum); self.period.setSuffix(" ms")
             self.period.setKeyboardTracking(False)
             self.period.valueChanged.connect(lambda value: panel.window.effect_changed(effect,"rate",1000/value))
             row=QHBoxLayout(); row.addWidget(QLabel("Period")); row.addWidget(self.period); row.addStretch(); body.addLayout(row)

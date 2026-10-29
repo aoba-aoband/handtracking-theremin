@@ -7,13 +7,13 @@
         signal = In.ar(in, 2);
         lfo = Select.kr(wave.clip(0, 2), [SinOsc.kr(Lag.kr(rate, 0.03)), LFTri.kr(Lag.kr(rate, 0.03)), LFPulse.kr(Lag.kr(rate, 0.03)).range(-1, 1)]);
         lfo = Lag.kr(lfo, 0.003);
-        amount = Lag.kr(on.clip(0, 1) * depth.clip(0, 1), 0.03);
+        amount = Lag.kr(on.clip(0, 1) * depth.clip(0, 2), 0.03);
         Out.ar(out, signal * (1 - (amount * (lfo + 1) * 0.5)));
     }).add;
     SynthDef(\regularDistortion, { |in=0, out=0, on=0, drive=2, tone=8000, level=0.5, mix=1|
         var signal, wet, blend, gain;
         signal = In.ar(in, 2);
-        gain = Lag.kr(drive.clip(1, 40), 0.03);
+        gain = Lag.kr(drive.clip(1, 80), 0.03);
         wet = (signal * gain).tanh / gain.tanh;
         wet = LPF.ar(LeakDC.ar(wet), Lag.kr(tone.clip(100, 18000).min(SampleRate.ir * 0.4), 0.03)) * Lag.kr(level, 0.03);
         blend = Lag.kr(on.clip(0, 1) * mix.clip(0, 1), 0.03);
@@ -23,7 +23,7 @@
         var signal, wet, blend;
         signal = In.ar(in, 2);
         wet = LPF.ar(signal, tone.clip(100, 18000).min(SampleRate.ir * 0.2));
-        wet = ((wet * Lag.kr(drive.clip(1, 80), 0.03)) + 0.35).tanh.clip(-0.55, 0.85);
+        wet = ((wet * Lag.kr(drive.clip(1, 160), 0.03)) + 0.35).tanh.clip(-0.55, 0.85);
         wet = LPF.ar(LeakDC.ar(wet), Lag.kr(tone.clip(100, 18000).min(SampleRate.ir * 0.4), 0.03)) * Lag.kr(level, 0.03);
         blend = Lag.kr(on.clip(0, 1) * mix.clip(0, 1), 0.03);
         Out.ar(out, (signal * (1 - blend)) + (wet * blend));
