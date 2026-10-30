@@ -1,6 +1,6 @@
 # Handtracking Theremin
 
-[English](README.md) · [クイックスタート](QUICKSTART_ja.md) · [Quick Start](QUICKSTART.md)
+[English](README.md) · [クイックスタート](QUICKSTART_ja.md) · [Quick Start](QUICKSTART.md) · [ユーザーマニュアル](USER_MANUAL_ja.md)
 
 Webカメラで手の動きを読み取り、音程・音量・音色を操作するテルミンのプロトタイプです。
 Python / MediaPipeで手を検出し、音楽用の制御イベントをOSCでSuperColliderへ送り、発音します。
@@ -8,6 +8,8 @@ Python / MediaPipeで手を検出し、音楽用の制御イベントをOSCでSu
 将来ほかの楽器へ展開できるよう分離しています。
 
 ## はじめに
+
+演奏する方は[ユーザーマニュアル](USER_MANUAL_ja.md)をご覧ください。起動・演奏・音色作り・保存・困ったときの操作を、画面のボタン名に沿って説明しています。
 
 初回セットアップ・最初の発音・トラブル対処は[クイックスタート](QUICKSTART_ja.md)を参照してください。
 依存関係を導入済みの環境では、リポジトリ直下でPowerShellから起動します。

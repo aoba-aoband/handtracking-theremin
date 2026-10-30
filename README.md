@@ -1,6 +1,6 @@
 # Handtracking Theremin
 
-[日本語](README_ja.md) · [Quick Start](QUICKSTART.md) · [クイックスタート](QUICKSTART_ja.md)
+[日本語](README_ja.md) · [Quick Start](QUICKSTART.md) · [クイックスタート](QUICKSTART_ja.md) · [User Manual](USER_MANUAL.md) · [ユーザーマニュアル](USER_MANUAL_ja.md)
 
 A webcam-controlled theremin prototype. Python detects hands with MediaPipe,
 converts their movement into musical control events, and sends OSC to
@@ -8,6 +8,8 @@ SuperCollider for sound synthesis. The current focus is a playable theremin;
 tracking, features, mapping and output remain separate for future instruments.
 
 ## Start here
+
+For playing the instrument, see the [User Manual](USER_MANUAL.md). It walks through launching, playing, shaping sounds, saving settings, and troubleshooting using the controls shown on screen.
 
 Use the [English Quick Start](QUICKSTART.md) for installation, first sound and
 troubleshooting. On an existing checkout with dependencies installed, run this

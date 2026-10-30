@@ -1,6 +1,8 @@
 # Handtracking Theremin — クイックスタート
 
-[English](QUICKSTART.md) · [プロジェクトREADME](README_ja.md)
+[English](QUICKSTART.md) · [プロジェクトREADME](README_ja.md) · [ユーザーマニュアル](USER_MANUAL_ja.md)
+
+演奏の操作を順に知りたい方は[ユーザーマニュアル](USER_MANUAL_ja.md)をご覧ください。このクイックスタートには、セットアップ担当者向けの情報も含みます。
 
 Windows PowerShellで、MediaPipe・OSC・SuperColliderを使う通常用UIを起動する手順です。
 別系統のsounddevice版ランチャーは、この起動経路に含みません。

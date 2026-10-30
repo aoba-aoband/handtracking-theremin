@@ -1,6 +1,8 @@
 # Handtracking Theremin — Quick Start
 
-[日本語](QUICKSTART_ja.md) · [Project README](README.md)
+[日本語](QUICKSTART_ja.md) · [Project README](README.md) · [User Manual](USER_MANUAL.md)
+
+For step-by-step playing instructions, see the [User Manual](USER_MANUAL.md). This Quick Start also includes information for the person setting up the app.
 
 This guide uses the Regular UI with MediaPipe, OSC and SuperCollider on Windows
 PowerShell. The separate sounddevice player is not part of this launch path.
